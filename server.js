@@ -1,7 +1,6 @@
 // server.js
 
 require('dotenv').config(); // Load environment variables
-
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
@@ -123,20 +122,25 @@ function cleanAndParseAmount(amountStr) {
  * @param {string} date - Date in 'YYYY-MM-DD' format
  */
 async function getUsdToIlsExchangeRate(date) {
-  // Use exchange rate API that supports historical rates
-  // For example, using exchangerate.host API
-  const url = `https://api.exchangerate.host/convert?from=USD&to=ILS&date=${date}&amount=1`;
+  const apiKey = process.env.EXCHANGE_RATE_API_KEY; // Make sure to set this in your .env file
+  const [year, month, day] = date.split('-');
+  const url = `https://v6.exchangerate-api.com/v6/${apiKey}/history/USD/${year}/${month}/${day}`;
+
   try {
     const response = await axios.get(url);
-    if (response.data && response.data.result) {
-      console.log(`Exchange rate on ${date}: ${response.data.result}`);
-      return response.data.result;
+    if (response.data && response.data.result === 'success') {
+      const ilsRate = response.data.conversion_rates.ILS;
+      console.log(`Exchange rate on ${date}: ${ilsRate}`);
+      return ilsRate;
     } else {
       console.log(`Error retrieving exchange rate for ${date}. Defaulting to 3.7404.`);
       return 3.7404;
     }
   } catch (error) {
     console.error(`Error fetching exchange rate for ${date}:`, error.message);
+    if (error.response && error.response.data && error.response.data['error-type']) {
+      console.error(`API Error Type: ${error.response.data['error-type']}`);
+    }
     return 3.7404; // Default rate
   }
 }
@@ -237,22 +241,28 @@ async function unlockPdf(
  */
 async function isPdfEncrypted(filePath) {
   try {
-    const existingPdfBytes = fs.readFileSync(filePath);
-    await PDFDocument.load(existingPdfBytes, { ignoreEncryption: true });
-    return false; // Not encrypted
-  } catch (error) {
-    // PDF-lib throws an error if the PDF is encrypted
-    if (
-      error.message.includes('Cannot parse PDF') ||
-      error.message.includes('encrypted')
-    ) {
-      return true; // Encrypted
+    const pdfBuffer = await fs.promises.readFile(filePath);
+    const pdfDoc = await PDFDocument.load(pdfBuffer, { ignoreEncryption: true });
+    
+    // Check if the PDF is encrypted
+    if (pdfDoc.isEncrypted) {
+      return true;
     }
-    // Re-throw if it's a different error
-    throw error;
+
+    // Additional check: try to access a page
+    try {
+      pdfDoc.getPage(0);
+      return false; // If we can access a page, it's not encrypted
+    } catch (error) {
+      // If we can't access a page, it might be encrypted
+      return true;
+    }
+  } catch (error) {
+    console.error('Error checking PDF encryption:', error.message);
+    // If there's an error, assume it's encrypted to be safe
+    return true;
   }
 }
-
 /**
  * Detect Currency using regex
  * @param {string} value - Text containing the amount
@@ -347,7 +357,7 @@ async function parseReceiptWithDocumentAI(filePath, serviceAccountAuth) {
     let hasUSD = false;
     let originalUSD = 0;
     let convertedTotalPrice = 0;
-    let invoiceDate = ''; // To store the date extracted
+    let invoiceDate = '';
 
     // First pass to detect if USD exists and extract the date
     for (const entity of entities) {
@@ -366,11 +376,12 @@ async function parseReceiptWithDocumentAI(filePath, serviceAccountAuth) {
         hasUSD = true;
       }
 
-      // Extract the date
-      if (entity.type === 'Date') {
+      if (entity.type === 'Date' && !invoiceDate) {
         result['Date'] = value;
         invoiceDate = value;
       }
+
+      if (hasUSD && invoiceDate) break;
     }
 
     // If date is not extracted, use today's date
@@ -404,24 +415,24 @@ async function parseReceiptWithDocumentAI(filePath, serviceAccountAuth) {
       }
     }
 
-    // Fetch exchange rate for the invoice date, use cache if available
-    let exchangeRate = exchangeRateCache[invoiceDate];
-    if (!exchangeRate) {
-      exchangeRate = await getUsdToIlsExchangeRate(invoiceDate);
-      exchangeRateCache[invoiceDate] = exchangeRate;
+    let exchangeRate;
+    if (hasUSD) {
+      // Only fetch exchange rate if USD is detected
+      exchangeRate = exchangeRateCache[invoiceDate];
+      if (!exchangeRate) {
+        exchangeRate = await getUsdToIlsExchangeRate(invoiceDate);
+        exchangeRateCache[invoiceDate] = exchangeRate;
+      }
+      console.log(`Using exchange rate: ${exchangeRate} for date: ${invoiceDate}`);
     }
 
     // Process entities and convert amounts
     for (const entity of entities) {
       let value = '';
-      let currencyCode = '';
-
       if (entity.normalizedValue && entity.normalizedValue.moneyValue) {
         value = entity.normalizedValue.moneyValue.amount;
-        currencyCode = entity.normalizedValue.moneyValue.currencyCode || '';
       } else {
         value = entity.mentionText || '';
-        currencyCode = detectCurrency(value);
       }
 
       switch (entity.type) {
@@ -430,9 +441,6 @@ async function parseReceiptWithDocumentAI(filePath, serviceAccountAuth) {
           break;
         case 'Business-Number':
           result['BusinessNumber'] = value;
-          break;
-        case 'Date':
-          // Already handled
           break;
         case 'Invoice-Number':
           result['InvoiceNumber'] = value;
@@ -457,14 +465,10 @@ async function parseReceiptWithDocumentAI(filePath, serviceAccountAuth) {
         case 'Total-Price':
           const totalPrice = cleanAndParseAmount(value);
           if (hasUSD) {
-            convertedTotalPrice += totalPrice * exchangeRate;
-            result['TotalPrice'] = totalPrice * exchangeRate;
+            convertedTotalPrice = totalPrice * exchangeRate;
           } else {
             result['TotalPrice'] = totalPrice;
           }
-          break;
-        default:
-          // Ignore other entities
           break;
       }
     }
@@ -492,29 +496,44 @@ async function parseReceiptWithDocumentAI(filePath, serviceAccountAuth) {
  * @param {Array} expenses - Array of expense objects
  * @param {string} folderPath - Path to the folder where Excel file will be saved
  */
-async function createExpenseExcel(expenses, folderPath) {
-  const excelPath = path.join(folderPath, 'סיכום הוצאות.xlsx'); // 'Expense Summary' in Hebrew
+async function createExpenseExcel(expenses, folderPath, filePrefix, startDate, endDate, fullName) {
+  // Ensure valid dates
+  const validStartDate = parse(startDate, 'yyyy-MM-dd', new Date());
+  const validEndDate = parse(endDate, 'yyyy-MM-dd', new Date());
+
+  // Format dates
+  const startDateFormatted = format(validStartDate, 'dd-MM-yy');
+  const endDateFormatted = format(validEndDate, 'dd-MM-yy');
+  
+  // Create base filename
+  let baseFileName = `${startDateFormatted}-to-${endDateFormatted}-${fullName.replace(/\s+/g, '_')}`;
+  let fileName = `${baseFileName}.xlsx`;
+  let fullPath = path.join(folderPath, fileName);
+  
+  // Check for existing files and add numbering if necessary
+  let fileNumber = 1;
+  while (fs.existsSync(fullPath)) {
+    fileName = `${baseFileName} (${fileNumber}).xlsx`;
+    fullPath = path.join(folderPath, fileName);
+    fileNumber++;
+  }
 
   // Create a new workbook and add a worksheet
   const workbook = new Excel.Workbook();
-  const worksheet = workbook.addWorksheet('Expenses');
-
+  const worksheet = workbook.addWorksheet('Expenses', {
+    views: [{ rightToLeft: true }]
+  });
   // Define columns with headers and keys
   worksheet.columns = [
-    { header: 'שם הקובץ', key: 'FileName', width: 30 }, // File Name
-    { header: 'שם העסק', key: 'BusinessName', width: 25 }, // Business Name
-    { header: 'מספר עסק', key: 'BusinessNumber', width: 20 }, // Business Number
-    { header: 'תאריך', key: 'Date', width: 15 }, // Date
-    { header: 'מספר חשבונית', key: 'InvoiceNumber', width: 20 }, // Invoice Number
-    {
-      header: 'סכום מקורי בדולרים',
-      key: 'OriginalTotalUSD',
-      width: 20,
-    }, // Original Amount (USD)
-    { header: 'סכום ללא מע"מ', key: 'PriceWithoutVat', width: 20 }, // Price Without VAT
-    { header: 'מע"מ', key: 'VAT', width: 15 }, // VAT
-    { header: 'סכום כולל', key: 'TotalPrice', width: 20 }, // Total Price
-    { header: 'מטבע', key: 'Currency', width: 10 }, // Currency
+    { header: 'שם הקובץ', key: 'FileName', width: 30 },
+    { header: 'שם העסק', key: 'BusinessName', width: 25 },
+    { header: 'מספר עסק', key: 'BusinessNumber', width: 20 },
+    { header: 'תאריך', key: 'Date', width: 15 },
+    { header: 'מספר חשבונית', key: 'InvoiceNumber', width: 20 },
+    { header: 'סכום ללא מע"מ', key: 'PriceWithoutVat', width: 20 },
+    { header: 'מע"מ', key: 'VAT', width: 15 },
+    { header: 'סכום כולל', key: 'TotalPrice', width: 20 },
+    { header: 'הומר מדולרים*', key: 'OriginalTotalUSD', width: 10 },
   ];
 
   // Apply styling to header row
@@ -555,14 +574,12 @@ async function createExpenseExcel(expenses, folderPath) {
       PriceWithoutVat: priceWithoutVatValue,
       VAT: vatValue,
       TotalPrice: totalPriceValue,
-      Currency: expense['Currency'],
     });
   });
 
   // Add totals row
   const totalsRow = worksheet.addRow({
     FileName: 'Total',
-    OriginalTotalUSD: totalOriginalUSD > 0 ? totalOriginalUSD : '',
     PriceWithoutVat: totalWithoutVat,
     VAT: totalVAT,
     TotalPrice: totalPrice,
@@ -583,21 +600,26 @@ async function createExpenseExcel(expenses, folderPath) {
 
   // Adjust alignment
   worksheet.columns.forEach((column) => {
-    column.alignment = { vertical: 'middle', horizontal: 'center' };
+    column.alignment = { vertical: 'middle', horizontal: 'right' };
   });
 
   // Save the workbook to file
-  await workbook.xlsx.writeFile(excelPath);
-  console.log('Expense summary Excel file created at:', excelPath);
+  try {
+    await workbook.xlsx.writeFile(fullPath);
+    console.log('Expense summary Excel file created at:', fullPath);
+    return fullPath;
+  } catch (error) {
+    console.error('Error saving Excel file:', error);
+    throw new Error('Failed to save Excel file');
+  }
 }
-
 /**
  * Process Files (PDFs and Images)
  * @param {Array} files - Array of file paths
  * @param {string} folderPath - Path to save the Excel file
  * @returns {Array} - Array of extracted expense data
  */
-async function processFiles(files, folderPath) {
+async function processFiles(files, folderPath, filePrefix, startDate, endDate, fullName) {
   // Authenticate with Service Account for Document AI
   const serviceAccountAuth = authenticateServiceAccount();
   await serviceAccountAuth.authorize(); // Ensure the client is authorized
@@ -613,32 +635,32 @@ async function processFiles(files, folderPath) {
     let processedFilePath = filePath;
 
     if (isPDF) {
-      // Check if the PDF is encrypted
-      const isEncrypted = await isPdfEncrypted(filePath);
-      if (isEncrypted) {
-        console.log('PDF is encrypted. Attempting to unlock:', filePath);
-        // Attempt to unlock PDF
-        const unlockedPath = await unlockPdf(filePath);
-        if (unlockedPath) {
-          // Overwrite the original file with the unlocked PDF
-          fs.copyFileSync(unlockedPath, filePath);
-          fs.unlinkSync(unlockedPath); // Remove the temporary unlocked file
-          console.log('PDF unlocked and overwritten:', filePath);
-          processedFilePath = filePath; // Continue processing the unlocked file
+      try {
+        // Check if the PDF is encrypted
+        const isEncrypted = await isPdfEncrypted(filePath);
+        if (isEncrypted) {
+          console.log('PDF is encrypted. Attempting to unlock:', filePath);
+          // Attempt to unlock PDF
+          const unlockedPath = await unlockPdf(filePath);
+          if (unlockedPath) {
+            // Overwrite the original file with the unlocked PDF
+            fs.copyFileSync(unlockedPath, filePath);
+            fs.unlinkSync(unlockedPath); // Remove the temporary unlocked file
+            console.log('PDF unlocked and overwritten:', filePath);
+            processedFilePath = filePath; // Continue processing the unlocked file
+          } else {
+            console.log('Failed to unlock PDF:', filePath);
+            continue; // Skip processing if PDF is locked and couldn't be unlocked
+          }
         } else {
-          console.log('Skipping locked PDF:', filePath);
-          continue; // Skip processing if PDF is locked and couldn't be unlocked
+          console.log('PDF is not encrypted. Proceeding without unlocking:', filePath);
         }
-      } else {
-        console.log(
-          'PDF is not encrypted. Proceeding without unlocking:',
-          filePath
-        );
-        // No action needed since we're processing in place
+      } catch (error) {
+        console.error('Error processing PDF:', filePath, error);
+        continue; // Skip this file if there's an error
       }
     } else {
       console.log('File is an image. Proceeding to process:', filePath);
-      // No encryption handling needed for images
     }
 
     // Parse the receipt with Document AI using the file path
@@ -651,13 +673,20 @@ async function processFiles(files, folderPath) {
     }
   }
 
-  return expenses;
-}
+  if (expenses.length > 0) {
+    const excelPath = await createExpenseExcel(expenses, folderPath, filePrefix, startDate, endDate, fullName);
+    return { expenses, excelPath };
+  }
 
+  return { expenses, excelPath: null };
+}
 /**
  * Download Gmail Attachments
  * Adapted for dynamic user authentication
  */
+function formatDateForGmail(date) {
+  return format(date, 'yyyy/MM/dd');
+}
 async function downloadGmailAttachments(auth, startDate, endDate) {
   const gmail = google.gmail({ version: 'v1', auth });
 
@@ -665,12 +694,14 @@ async function downloadGmailAttachments(auth, startDate, endDate) {
   const folderName = `קבלות ${formatDate(startDate)} עד ${formatDate(endDate)}`;
   const folderPath = path.join(INPUT_FOLDER, folderName);
   fs.ensureDirSync(folderPath);
-
+  endDate.setHours(23, 59, 59, 999);
+  const queryEndDate = new Date(endDate.getTime() + 24 * 60 * 60 * 1000);
   // Prepare date queries
-  const afterDate = format(startDate, 'yyyy/MM/dd');
-  const beforeDate = format(endDate, 'yyyy/MM/dd');
+  const startDateQuery = formatDateForGmail(startDate);
+  const endDateQuery = formatDateForGmail(queryEndDate);
 
-  const query = `after:${afterDate} before:${beforeDate}`;
+  const query = `after:${startDateQuery} before:${endDateQuery}`;
+  console.log('Gmail query:', query);
 
   const excludedSenders = [
     'חברת חשמל לישראל',
@@ -867,44 +898,29 @@ app.get('/', (req, res) => {
 // Handle File Upload and Processing
 app.post('/upload', (req, res) => {
   upload(req, res, async function (err) {
-    if (err instanceof multer.MulterError) {
-      // A Multer error occurred when uploading.
-      console.error('Multer Error:', err.message);
-      return res.status(500).send(`Multer Error: ${err.message}`);
-    } else if (err) {
-      // An unknown error occurred when uploading.
+    if (err) {
       console.error('Upload Error:', err.message);
       return res.status(500).send(`Upload Error: ${err.message}`);
     }
 
-    // Everything went fine.
     if (!req.files || req.files.length === 0) {
-      return res
-        .status(400)
-        .send(
-          'No supported files were uploaded. Please upload PDF or image files.'
-        );
+      return res.status(400).send('No supported files were uploaded. Please upload PDF or image files.');
     }
 
     console.log(`Received ${req.files.length} file(s). Starting processing...`);
 
-    // Set output folder path to INPUT_FOLDER
-    const outputFolder = INPUT_FOLDER;
-
     try {
-      // Get file paths
       const files = req.files.map((file) => file.path);
+      const filePrefix = req.body.filePrefix || 'סיכום הוצאות';
+      const startDate = req.body.startDate || formatDate(new Date());
+      const endDate = req.body.endDate || formatDate(new Date());
+      const fullName = req.body.fullName || 'User';
 
-      // Process the uploaded files
-      const expenses = await processFiles(files, outputFolder);
+      const { expenses, excelPath } = await processFiles(files, INPUT_FOLDER, filePrefix, startDate, endDate, fullName);
 
-      // Create Expense Excel File
-      if (expenses.length > 0) {
-        await createExpenseExcel(expenses, outputFolder);
-        console.log('Expense summary Excel file created.');
-
-        // Provide a download link to the Excel file
-        const excelFileName = encodeURIComponent('סיכום הוצאות.xlsx');
+      if (expenses.length > 0 && excelPath) {
+        console.log('Expense summary Excel file created at:', excelPath);
+        const excelFileName = encodeURIComponent(path.basename(excelPath));
         const csvUrl = `/download/${excelFileName}`;
         res.render('result', {
           success: true,
@@ -928,13 +944,27 @@ app.post('/upload', (req, res) => {
 app.get('/download/:filename', (req, res) => {
   const { filename } = req.params;
   const decodedFilename = decodeURIComponent(filename);
-  const filePath = path.join(INPUT_FOLDER, decodedFilename);
+  
+  // Search for the file in INPUT_FOLDER and its subfolders
+  const findFile = (dir) => {
+    const files = fs.readdirSync(dir);
+    for (const file of files) {
+      const filePath = path.join(dir, file);
+      const stat = fs.statSync(filePath);
+      if (stat.isDirectory()) {
+        const found = findFile(filePath);
+        if (found) return found;
+      } else if (file === decodedFilename) {
+        return filePath;
+      }
+    }
+    return null;
+  };
 
-  if (fs.existsSync(filePath)) {
-    res.setHeader(
-      'Content-Type',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    );
+  const filePath = findFile(INPUT_FOLDER);
+
+  if (filePath && fs.existsSync(filePath)) {
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.download(filePath, decodedFilename, (err) => {
       if (err) {
         console.error('Download Error:', err.message);
@@ -1041,44 +1071,36 @@ app.get('/process-gmail', authenticateGmail, (req, res) => {
 app.post('/process-gmail', authenticateGmail, async (req, res) => {
   try {
     const auth = req.oAuth2Client;
+    const { startDate, endDate, fullName, filePrefix } = req.body;
+    const customPrefix = filePrefix || 'סיכום הוצאות'; // Use default if not provided
 
-    // Get start and end dates from the form
-    const { startDate: startDateStr, endDate: endDateStr } = req.body;
+    console.log('Processing Gmail attachments from', startDate, 'to', endDate);
 
-    if (!startDateStr || !endDateStr) {
-      return res.status(400).send('Please provide both start date and end date.');
-    }
+    const startDateObj = new Date(startDate);
+    const endDateObj = new Date(endDate);
+    endDateObj.setHours(23, 59, 59, 999); // Set to end of day
 
-    const startDate = new Date(startDateStr);
-    const endDate = new Date(endDateStr);
-    endDate.setHours(23, 59, 59, 999);
+    const attachmentsFolder = await downloadGmailAttachments(auth, startDateObj, endDateObj);
+    console.log('Attachments downloaded to:', attachmentsFolder);
 
-    // Download attachments
-    const attachmentsFolder = await downloadGmailAttachments(auth, startDate, endDate);
-
-    // Get all files in the attachments folder
     const files = fs.readdirSync(attachmentsFolder).map((file) =>
       path.join(attachmentsFolder, file)
     );
-
-    console.log(`Downloaded ${files.length} attachment(s). Starting processing...`);
+    console.log('Files found:', files);
 
     if (files.length === 0) {
-      return res
-        .status(400)
-        .send('No attachments were downloaded from Gmail within the specified date range.');
+      return res.render('result', {
+        success: false,
+        message: 'No attachments were downloaded from Gmail within the specified date range.',
+      });
     }
 
-    // Process the downloaded files
-    const expenses = await processFiles(files, attachmentsFolder);
+    const { expenses, excelPath } = await processFiles(files, attachmentsFolder, customPrefix, startDate, endDate, fullName);
+    console.log('Expenses extracted:', expenses.length);
+    console.log('Excel file created at:', excelPath);
 
-    // Create Expense Excel File
-    if (expenses.length > 0) {
-      await createExpenseExcel(expenses, attachmentsFolder);
-      console.log('Expense summary Excel file created.');
-
-      // Provide a download link to the Excel file
-      const excelFileName = encodeURIComponent('סיכום הוצאות.xlsx');
+    if (expenses.length > 0 && excelPath) {
+      const excelFileName = encodeURIComponent(path.basename(excelPath));
       const csvUrl = `/download/${excelFileName}`;
       res.render('result', {
         success: true,
@@ -1092,7 +1114,7 @@ app.post('/process-gmail', authenticateGmail, async (req, res) => {
       });
     }
   } catch (error) {
-    console.error('Error processing Gmail attachments:', error.message);
+    console.error('Error processing Gmail attachments:', error);
     res.status(500).send(`Error: ${error.message}`);
   }
 });
@@ -1106,5 +1128,5 @@ app.get('/logout', (req, res) => {
 // Start the Server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+  console.log(`Server is running on http://localhost:${PORT}`);
 });
