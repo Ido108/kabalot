@@ -55,9 +55,9 @@ const PASSWORD_PROTECTED_PDF_PASSWORD =
 
 // Google Document AI Configuration
 const DOCUMENT_AI_CONFIG = {
-  projectId: 'your-gcp-project-id', // Replace with your GCP project ID
+  projectId: 'eighth-block-311611', // Replace with your GCP project ID
   location: 'us', // Processor location
-  processorId: 'your-processor-id', // Your actual processor ID
+  processorId: '78ac8067f0c37ec6', // Your actual processor ID
 };
 
 // Use base64 encoded service account credentials from environment variable
