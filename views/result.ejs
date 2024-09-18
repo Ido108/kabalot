@@ -1,0 +1,60 @@
+<!-- views/result.ejs -->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <!-- If your content includes Hebrew or other non-ASCII characters, ensure UTF-8 encoding -->
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Processing Result</title>
+    <!-- Bootstrap CSS -->
+    <link
+      rel="stylesheet"
+      href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css"
+      integrity="sha384-ME2dN43ZsCZlPSx37xZtB0IK1ScUyVezDlsMkXU0jJGnXkvv7VbpfbUH3Y6Xm0Rd"
+      crossorigin="anonymous"
+    />
+    <link rel="stylesheet" href="/styles.css">
+    <style>
+        /* Additional custom styles */
+        .btn-success, .btn-primary {
+            width: 100%;
+        }
+
+        .message {
+            font-size: 18px;
+            margin-bottom: 20px;
+        }
+
+        .container {
+            max-width: 500px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-5 text-center">
+        <% if (success) { %>
+            <h1 class="mb-4">Processing Complete!</h1>
+            <p class="message"><%= message %></p>
+            <a href="<%= csvUrl %>" class="btn btn-success mb-3">Download Excel File</a>
+        <% } else { %>
+            <h1 class="mb-4 text-danger">Processing Failed</h1>
+            <p class="message text-danger"><%= message %></p>
+        <% } %>
+        <a href="/" class="btn btn-primary">Process Another Folder</a>
+    </div>
+
+    <!-- Bootstrap JS and dependencies -->
+    <script
+      src="https://code.jquery.com/jquery-3.5.1.slim.min.js"
+      integrity="sha384-DfXdz2htPH0lsSSs5nCTpuj/zy4C+OGpamoFVy38MVBnE+IbbVYUew+OrCXaRkfj"
+      crossorigin="anonymous"
+    ></script>
+    <script
+      src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.bundle.min.js"
+      integrity="sha384-LtrjvnR4/JWT+Fn6Jn3AK8C3F1O5Zy5eN1Vf1A5N09l2ZDbJhP6d2aW1UygOqNQu"
+      crossorigin="anonymous"
+    ></script>
+</body>
+</html>
