@@ -149,12 +149,12 @@ async function getUsdToIlsExchangeRate(date) {
  */
 async function unlockPdf(
   filePath,
-  password 
+  password = PASSWORD_PROTECTED_PDF_PASSWORD
 ) {
   if (!PDFCO_API_KEY) {
     throw new Error('PDFCO_API_KEY is not set in environment variables.');
   }
-  password = password || '';
+
   try {
     // Step 1: Upload the PDF
     const formData = new FormData();
@@ -595,10 +595,9 @@ async function createExpenseExcel(expenses, folderPath) {
  * Process Files (PDFs and Images)
  * @param {Array} files - Array of file paths
  * @param {string} folderPath - Path to save the Excel file
- * @param {string} pdfPassword - Password for protected PDFs
  * @returns {Array} - Array of extracted expense data
  */
-async function processFiles(files, folderPath, pdfPassword) {
+async function processFiles(files, folderPath) {
   // Authenticate with Service Account for Document AI
   const serviceAccountAuth = authenticateServiceAccount();
   await serviceAccountAuth.authorize(); // Ensure the client is authorized
@@ -618,8 +617,8 @@ async function processFiles(files, folderPath, pdfPassword) {
       const isEncrypted = await isPdfEncrypted(filePath);
       if (isEncrypted) {
         console.log('PDF is encrypted. Attempting to unlock:', filePath);
-        // Attempt to unlock PDF using the provided password
-        const unlockedPath = await unlockPdf(filePath, pdfPassword);
+        // Attempt to unlock PDF
+        const unlockedPath = await unlockPdf(filePath);
         if (unlockedPath) {
           // Overwrite the original file with the unlocked PDF
           fs.copyFileSync(unlockedPath, filePath);
@@ -891,12 +890,13 @@ app.post('/upload', (req, res) => {
 
     // Set output folder path to INPUT_FOLDER
     const outputFolder = INPUT_FOLDER;
-    const pdfPassword = req.body.pdfPassword || '';
+
     try {
       // Get file paths
       const files = req.files.map((file) => file.path);
-      const expenses = await processFiles(files, OUTPUT_FOLDER, pdfPassword);
 
+      // Process the uploaded files
+      const expenses = await processFiles(files, outputFolder);
 
       // Create Expense Excel File
       if (expenses.length > 0) {
