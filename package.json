@@ -6,9 +6,10 @@
   "scripts": {
     "start": "node server.js"
   },
-  "engines": {
-    "node": "14.x"
-  },
+"engines": {
+  "node": "14.x",
+  "npm": "6.x"
+},
   "dependencies": {
     "axios": "^0.27.2",
     "cors": "^2.8.5",
