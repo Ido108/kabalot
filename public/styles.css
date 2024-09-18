@@ -1,97 +1,42 @@
 /* public/styles.css */
 
-/* General body styling */
-body {
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    background-color: #f8f9fa;
-    margin: 0;
-    padding: 0;
+/* Custom styles can go here */
+
+/* Example: Center the content vertically */
+html, body {
+    height: 100%;
 }
 
-/* Container styling */
+body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+}
+
+/* Style for the buttons */
+.btn-success, .btn-primary {
+    font-size: 1.2em;
+    padding: 10px 20px;
+    margin: 5px;
+}
+
+/* Additional custom styles */
 .container {
     max-width: 600px;
-    margin: auto;
-    padding: 20px;
 }
 
-/* Header styling */
 h1 {
-    font-size: 2.5rem;
-    margin-bottom: 30px;
-    color: #343a40;
+    font-size: 2em;
+    margin-bottom: 20px;
 }
 
-/* Dropzone styling */
-.dropzone {
-    border: 2px dashed #6c757d;
-    border-radius: 5px;
-    padding: 60px 20px;
-    background-color: #e9ecef;
-    transition: background-color 0.3s, border-color 0.3s;
-    position: relative;
+/* Style adjustments for Hebrew text (if needed) */
+body {
+    direction: rtl;
 }
 
-.dropzone.dragover {
-    background-color: #d0e7ff;
-    border-color: #0056b3;
-}
-
-.dropzone label {
-    font-size: 1.5rem;
-    font-weight: 500;
-    color: #6c757d;
-    cursor: pointer;
-}
-
-/* Hide the actual file input */
-.dropzone input[type="file"] {
-    display: none;
-}
-
-/* Upload message styling */
-#upload-message {
-    margin-top: 20px;
-    color: #28a745;
-    font-size: 1.2rem;
-    font-weight: 500;
-}
-
-/* Button styling */
-.btn-primary, .btn-success {
-    font-size: 1.25rem;
-    padding: 12px;
-    border-radius: 50px;
-    width: 100%;
-    max-width: 300px;
-    margin: 10px auto;
-    display: block;
-}
-
-/* Adjustments for smaller screens */
-@media (max-width: 576px) {
-    .container {
-        padding: 10px;
-    }
-
-    h1 {
-        font-size: 2rem;
-    }
-
-    .dropzone {
-        padding: 40px 15px;
-    }
-
-    .dropzone label {
-        font-size: 1.25rem;
-    }
-
-    .btn-primary, .btn-success {
-        font-size: 1.1rem;
-        padding: 10px;
-    }
-
-    #upload-message {
-        font-size: 1rem;
-    }
+/* Adjust font for better readability */
+body, h1, p, label {
+    font-family: 'Arial', sans-serif;
 }

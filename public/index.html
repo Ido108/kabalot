@@ -4,7 +4,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <!-- If your content includes Hebrew or other non-ASCII characters, ensure UTF-8 encoding -->
+    <!-- Ensure UTF-8 encoding for non-ASCII characters -->
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Document & Image Processor</title>
@@ -53,13 +53,34 @@
 <body>
     <div class="container mt-5">
         <h1 class="text-center mb-4">Document & Image Processor</h1>
+        <!-- File Upload Form -->
         <form action="/upload" method="POST" enctype="multipart/form-data">
             <div class="dropzone" id="dropzone">
                 <input type="file" id="file-input" name="files" multiple accept=".pdf, .jpg, .jpeg, .png, .tiff, .tif">
                 <label for="file-input">Tap to Select Files</label>
             </div>
+            <div class="form-group mt-3">
+                <label for="pdfPassword">Enter Password for Protected PDFs (if applicable):</label>
+                <input type="password" id="pdfPassword" name="pdfPassword" class="form-control" placeholder="Enter your national ID or password" />
+            </div>
             <div id="upload-message" class="text-center"></div>
             <button type="submit" class="btn btn-primary mt-3">Start Processing</button>
+        </form>
+     <!--       <div id="upload-message" class="text-center"></div>
+            <button type="submit" class="btn btn-primary mt-3">Start Processing</button>
+        </form> -->
+
+        <!-- Divider -->
+        <hr class="my-5">
+
+        <!-- Gmail Processing Form -->
+        <h2 class="text-center mb-4">Process Receipts from Gmail</h2>
+        <form action="/start-gmail-auth" method="post">
+            <div class="form-group">
+                <label for="email">Enter Your Gmail Address:</label>
+                <input type="email" id="email" name="email" class="form-control" required />
+            </div>
+            <button type="submit" class="btn btn-primary mt-3">Authorize Gmail Access</button>
         </form>
     </div>
 
