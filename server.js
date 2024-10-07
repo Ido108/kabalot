@@ -602,6 +602,67 @@ async function createExpenseExcel(expenses, folderPath, filePrefix, startDate, e
 /**
  * Process a single file
  */
+async function processFiles(files, folderPath, filePrefix, startDate, endDate, fullName) {
+  // Authenticate with Service Account for Document AI
+  const serviceAccountAuth = authenticateServiceAccount();
+  await serviceAccountAuth.authorize(); // Ensure the client is authorized
+
+  const expenses = [];
+
+  for (const filePath of files) {
+    console.log(`Processing file: ${filePath}`);
+
+    const ext = path.extname(filePath).toLowerCase();
+    const isPDF = ext === '.pdf';
+
+    let processedFilePath = filePath;
+
+    if (isPDF) {
+      try {
+        // Check if the PDF is encrypted
+        const isEncrypted = await isPdfEncrypted(filePath);
+        if (isEncrypted) {
+          console.log('PDF is encrypted. Attempting to unlock:', filePath);
+          // Attempt to unlock PDF
+          const unlockedPath = await unlockPdf(filePath);
+          if (unlockedPath) {
+            // Overwrite the original file with the unlocked PDF
+            fs.copyFileSync(unlockedPath, filePath);
+            fs.unlinkSync(unlockedPath); // Remove the temporary unlocked file
+            console.log('PDF unlocked and overwritten:', filePath);
+            processedFilePath = filePath; // Continue processing the unlocked file
+          } else {
+            console.log('Failed to unlock PDF:', filePath);
+            continue; // Skip processing if PDF is locked and couldn't be unlocked
+          }
+        } else {
+          console.log('PDF is not encrypted. Proceeding without unlocking:', filePath);
+        }
+      } catch (error) {
+        console.error('Error processing PDF:', filePath, error);
+        continue; // Skip this file if there's an error
+      }
+    } else {
+      console.log('File is an image. Proceeding to process:', filePath);
+    }
+
+    // Parse the receipt with Document AI using the file path
+    const expenseData = await parseReceiptWithDocumentAI(
+      processedFilePath,
+      serviceAccountAuth
+    );
+    if (Object.keys(expenseData).length > 0) {
+      expenses.push(expenseData);
+    }
+  }
+
+  if (expenses.length > 0) {
+    const excelPath = await createExpenseExcel(expenses, folderPath, filePrefix, startDate, endDate, fullName);
+    return { expenses, excelPath };
+  }
+
+  return { expenses, excelPath: null };
+}
 async function processFile(filePath, serviceAccountAuth) {
   const ext = path.extname(filePath).toLowerCase();
   const isPDF = ext === '.pdf';
@@ -855,6 +916,26 @@ app.get('/download/:filename', (req, res) => {
 /**
  * Authenticate with OAuth2 for Gmail API
  */
+function isPdfFile(contentType, fileName) {
+  const normalizedContentType = contentType.toLowerCase();
+  const normalizedFileName = fileName.toLowerCase();
+
+  if (
+    normalizedContentType === 'application/pdf' ||
+    normalizedContentType === 'application/x-pdf' ||
+    normalizedContentType === 'application/acrobat' ||
+    normalizedContentType === 'applications/vnd.pdf' ||
+    normalizedContentType === 'text/pdf' ||
+    normalizedContentType === 'text/x-pdf' ||
+    normalizedContentType.includes('pdf')
+  ) {
+    return true;
+  } else if (normalizedFileName.endsWith('.pdf')) {
+    return true;
+  } else {
+    return false;
+  }
+}
 function authenticateGmail(req, res, next) {
   const oAuth2Client = new google.auth.OAuth2(
     process.env.GMAIL_CLIENT_ID,
