@@ -15,7 +15,6 @@ const Excel = require('exceljs');
 const { parse, format } = require('date-fns');
 const session = require('express-session');
 const events = require('events'); // For progress events
-const crypto = require('crypto'); // For file hashing
 
 const app = express();
 
@@ -63,9 +62,8 @@ if (!fs.existsSync(INPUT_FOLDER)) {
 console.log(`Input folder: ${INPUT_FOLDER}`);
 
 const PDFCO_API_KEY = process.env.PDFCO_API_KEY;
-
-// Use base64 encoded service account credentials from environment variable
-const SERVICE_ACCOUNT_BASE64 = process.env.SERVICE_ACCOUNT_BASE64;
+const PASSWORD_PROTECTED_PDF_PASSWORD =
+  process.env.PASSWORD_PROTECTED_PDF_PASSWORD || 'your-default-password';
 
 // Google Document AI Configuration
 const DOCUMENT_AI_CONFIG = {
@@ -73,6 +71,9 @@ const DOCUMENT_AI_CONFIG = {
   location: process.env.DOCUMENT_AI_LOCATION || 'us', // Processor location
   processorId: process.env.DOCUMENT_AI_PROCESSOR_ID || 'your-processor-id', // Your actual processor ID
 };
+
+// Use base64 encoded service account credentials from environment variable
+const SERVICE_ACCOUNT_BASE64 = process.env.SERVICE_ACCOUNT_BASE64;
 
 // Initialize Google OAuth2 Client for Document AI
 const SCOPES = ['https://www.googleapis.com/auth/cloud-platform'];
@@ -107,13 +108,6 @@ function formatDate(date) {
 }
 
 /**
- * Format Date for Gmail Query (YYYY/MM/DD)
- */
-function formatDateForGmail(date) {
-  return format(date, 'yyyy/MM/dd');
-}
-
-/**
  * Clean and Parse Amount
  */
 function cleanAndParseAmount(amountStr) {
@@ -141,7 +135,10 @@ async function getUsdToIlsExchangeRate(date) {
  * @param {string} password - Password to unlock the PDF
  * @returns {string|null} - Path to the unlocked PDF or null if failed
  */
-async function unlockPdf(filePath, password) {
+async function unlockPdf(
+  filePath,
+  password = PASSWORD_PROTECTED_PDF_PASSWORD
+) {
   if (!PDFCO_API_KEY) {
     throw new Error('PDFCO_API_KEY is not set in environment variables.');
   }
@@ -484,7 +481,7 @@ async function parseReceiptWithDocumentAI(filePath, serviceAccountAuth) {
  * @param {Array} expenses - Array of expense objects
  * @param {string} folderPath - Path to the folder where Excel file will be saved
  */
-async function createExpenseExcel(expenses, folderPath, name, startDate, endDate) {
+async function createExpenseExcel(expenses, folderPath, filePrefix, startDate, endDate, fullName) {
   // Ensure valid dates
   const validStartDate = parse(startDate, 'yyyy-MM-dd', new Date());
   const validEndDate = parse(endDate, 'yyyy-MM-dd', new Date());
@@ -494,10 +491,7 @@ async function createExpenseExcel(expenses, folderPath, name, startDate, endDate
   const endDateFormatted = format(validEndDate, 'dd-MM-yy');
   
   // Create base filename
-  let baseFileName = `${startDateFormatted}-to-${endDateFormatted}`;
-  if (name) {
-    baseFileName += `-${name.replace(/\s+/g, '_')}`;
-  }
+  let baseFileName = `${filePrefix}-${startDateFormatted}-to-${endDateFormatted}-${fullName.replace(/\s+/g, '_')}`;
   let fileName = `${baseFileName}.xlsx`;
   let fullPath = path.join(folderPath, fileName);
   
@@ -608,7 +602,7 @@ async function createExpenseExcel(expenses, folderPath, name, startDate, endDate
 /**
  * Process a single file
  */
-async function processFile(filePath, serviceAccountAuth, password) {
+async function processFile(filePath, serviceAccountAuth) {
   const ext = path.extname(filePath).toLowerCase();
   const isPDF = ext === '.pdf';
   let processedFilePath = filePath;
@@ -619,8 +613,8 @@ async function processFile(filePath, serviceAccountAuth, password) {
       const isEncrypted = await isPdfEncrypted(filePath);
       if (isEncrypted) {
         console.log('PDF is encrypted. Attempting to unlock:', filePath);
-        // Attempt to unlock PDF with provided password
-        const unlockedPath = await unlockPdf(filePath, password);
+        // Attempt to unlock PDF
+        const unlockedPath = await unlockPdf(filePath);
         if (unlockedPath) {
           // Overwrite the original file with the unlocked PDF
           fs.copyFileSync(unlockedPath, filePath);
@@ -645,42 +639,6 @@ async function processFile(filePath, serviceAccountAuth, password) {
   // Parse the receipt with Document AI
   const expenseData = await parseReceiptWithDocumentAI(processedFilePath, serviceAccountAuth);
   return expenseData;
-}
-
-/**
- * Calculate File Hash
- */
-function calculateFileHash(filePath) {
-  return new Promise((resolve, reject) => {
-    const hash = crypto.createHash('sha256');
-    const stream = fs.createReadStream(filePath);
-    stream.on('data', (data) => {
-      hash.update(data);
-    });
-    stream.on('end', () => {
-      resolve(hash.digest('hex'));
-    });
-    stream.on('error', (err) => {
-      reject(err);
-    });
-  });
-}
-
-/**
- * Calculate Buffer Hash
- */
-function calculateBufferHash(buffer) {
-  return crypto.createHash('sha256').update(buffer).digest('hex');
-}
-
-/**
- * Check if the file is a PDF based on content type and filename
- */
-function isPdfFile(contentType, filename) {
-  const ext = path.extname(filename).toLowerCase();
-  return (
-    contentType === 'application/pdf' || ext === '.pdf'
-  );
 }
 
 // Ensure input folder exists
@@ -718,9 +676,6 @@ const upload = multer({
 const uploadProgressEmitters = {};
 const gmailProgressEmitters = {};
 
-// Duplicate Files Set
-const processedFilesSet = new Set();
-
 // Routes
 
 // Home Route - Serve the upload form
@@ -748,8 +703,7 @@ app.post('/upload', upload, async (req, res) => {
   try {
     const files = req.files.map((file) => file.path);
     const totalFiles = files.length;
-    const name = req.body.name || ''; // Optional name
-    const idNumber = req.body.idNumber || ''; // Optional ID number for PDF password
+    const filePrefix = req.body.filePrefix || 'סיכום הוצאות';
 
     const progressData = files.map((filePath) => ({
       fileName: path.basename(filePath),
@@ -772,25 +726,13 @@ app.post('/upload', upload, async (req, res) => {
       const filePath = files[i];
       const fileName = path.basename(filePath);
 
-      // Check for duplicate files
-      const fileHash = await calculateFileHash(filePath);
-      if (processedFilesSet.has(fileHash)) {
-        console.log(`Skipping duplicate file: ${fileName}`);
-        progressData[i].status = 'Skipped (Duplicate)';
-        progressData[i].progress = 100;
-        emitProgress();
-        continue;
-      } else {
-        processedFilesSet.add(fileHash);
-      }
-
       // Update status to 'Processing'
       progressData[i].status = 'Processing';
       progressData[i].progress = 25;
       emitProgress();
 
       // Process the file
-      const expenseData = await processFile(filePath, serviceAccountAuth, idNumber);
+      const expenseData = await processFile(filePath, serviceAccountAuth);
 
       if (expenseData) {
         expenses.push(expenseData);
@@ -808,13 +750,15 @@ app.post('/upload', upload, async (req, res) => {
     if (expenses.length > 0) {
       const startDate = formatDate(new Date());
       const endDate = formatDate(new Date());
+      const fullName = 'User';
 
       const excelPath = await createExpenseExcel(
         expenses,
         INPUT_FOLDER,
-        name,
+        filePrefix,
         startDate,
-        endDate
+        endDate,
+        fullName
       );
       console.log('Expense summary Excel file created.');
 
@@ -1046,7 +990,8 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, async (req, res)
 
   try {
     const auth = req.oAuth2Client;
-    const { startDate, endDate, name, idNumber } = req.body;
+    const { startDate, endDate, fullName, filePrefix } = req.body;
+    const customPrefix = filePrefix || 'סיכום הוצאות'; // Use default if not provided
 
     console.log('Processing Gmail attachments from', startDate, 'to', endDate);
 
@@ -1086,22 +1031,12 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, async (req, res)
       const filePath = files[i];
       const fileName = path.basename(filePath);
 
-      // Check for duplicate files
-      const fileHash = await calculateFileHash(filePath);
-      if (processedFilesSet.has(fileHash)) {
-        console.log(`Skipping duplicate file: ${fileName}`);
-        progressEmitter.emit('progress', [{ status: `Skipping duplicate file: ${fileName}`, progress: 100 }]);
-        continue;
-      } else {
-        processedFilesSet.add(fileHash);
-      }
-
       // Update progress
       const progressPercent = 30 + ((i + 1) / files.length) * 50; // Between 30% and 80%
       progressEmitter.emit('progress', [{ status: `Processing ${fileName}...`, progress: progressPercent }]);
 
       // Process the file
-      const expenseData = await processFile(filePath, serviceAccountAuth, idNumber);
+      const expenseData = await processFile(filePath, serviceAccountAuth);
 
       if (expenseData) {
         expenses.push(expenseData);
@@ -1113,9 +1048,10 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, async (req, res)
     const excelPath = await createExpenseExcel(
       expenses,
       attachmentsFolder,
-      name,
+      customPrefix,
       startDate,
-      endDate
+      endDate,
+      fullName
     );
     console.log('Expenses extracted:', expenses.length);
     console.log('Excel file created at:', excelPath);
@@ -1159,170 +1095,64 @@ app.get('/gmail-progress/:sessionId', (req, res) => {
   });
 });
 
-// Function to download Gmail attachments with filtering and keywords
+// Function to download Gmail attachments
 async function downloadGmailAttachments(auth, startDate, endDate) {
   const gmail = google.gmail({ version: 'v1', auth });
+  const attachmentsFolder = path.join(INPUT_FOLDER, 'attachments');
+  fs.ensureDirSync(attachmentsFolder);
 
-  // Create folder to save attachments
-  const folderName = `קבלות ${formatDate(startDate)} עד ${formatDate(endDate)}`;
-  const folderPath = path.join(INPUT_FOLDER, folderName);
-  fs.ensureDirSync(folderPath);
+  const query = `after:${formatDate(startDate)} before:${formatDate(endDate)} has:attachment (filename:pdf OR filename:jpg OR filename:jpeg OR filename:png OR filename:tif OR filename:tiff)`;
 
-  // Prepare date queries
-  const startDateQuery = formatDateForGmail(startDate);
-  const endDateQuery = formatDateForGmail(endDate);
-
-  const query = `after:${startDateQuery} before:${endDateQuery}`;
-  console.log('Gmail query:', query);
-
-  const excludedSenders = [
-    'חברת חשמל לישראל',
-    'עיריית תל אביב-יפו',
-    'ארנונה - עיריית תל-אביב-יפו',
-  ];
-  const keywords = ['קבלה', 'חשבונית', 'חשבונית מס', 'הקבלה'];
-
+  let messages = [];
   let nextPageToken = null;
-  const allMessageIds = [];
 
-  // Fetch all message IDs matching the query
   do {
     const res = await gmail.users.messages.list({
       userId: 'me',
       q: query,
+      maxResults: 100,
       pageToken: nextPageToken,
-      maxResults: 500,
     });
-    const messages = res.data.messages || [];
-    allMessageIds.push(...messages);
+
+    if (res.data.messages) {
+      messages = messages.concat(res.data.messages);
+    }
+
     nextPageToken = res.data.nextPageToken;
   } while (nextPageToken);
 
-  // Process each message
-  for (const messageData of allMessageIds) {
+  console.log(`Found ${messages.length} messages with attachments.`);
+
+  for (const message of messages) {
     const msg = await gmail.users.messages.get({
       userId: 'me',
-      id: messageData.id,
-      format: 'full',
+      id: message.id,
     });
 
-    const headers = msg.data.payload.headers;
-    const fromHeader = headers.find((h) => h.name === 'From');
-    const subjectHeader = headers.find((h) => h.name === 'Subject');
-    const dateHeader = headers.find((h) => h.name === 'Date');
+    const parts = msg.data.payload.parts;
+    if (!parts) continue;
 
-    const sender = fromHeader ? fromHeader.value : '';
-    const subject = subjectHeader ? subjectHeader.value : '';
-    const messageDateStr = dateHeader ? dateHeader.value : '';
-    const messageDate = new Date(messageDateStr);
+    for (const part of parts) {
+      if (part.filename && part.body && part.body.attachmentId) {
+        const attachment = await gmail.users.messages.attachments.get({
+          userId: 'me',
+          messageId: message.id,
+          id: part.body.attachmentId,
+        });
 
-    // Check if message date is within range
-    if (messageDate < startDate || messageDate > endDate) {
-      continue;
-    }
+        const data = attachment.data.data;
+        const fileData = Buffer.from(data, 'base64');
 
-    // Exclusion logic
-    let excludeThread = false;
-    let keywordFound = false;
+        const sanitizedFilename = sanitize(part.filename) || 'unnamed_attachment';
+        const filePath = path.join(attachmentsFolder, sanitizedFilename);
 
-    for (const excludedSender of excludedSenders) {
-      if (sender.includes(excludedSender)) {
-        excludeThread = true;
-        for (const keyword of keywords) {
-          if (subject.includes(keyword)) {
-            keywordFound = true;
-            break; // No need to check further if keyword is found
-          }
-        }
-        break; // No need to check other senders
-      }
-    }
-
-    // Decide whether to skip the thread
-    if (excludeThread && !keywordFound) {
-      // Skip this thread
-      console.log('Skipping message from excluded sender:', sender);
-      continue;
-    }
-
-    let receiptFoundInThread = false; // Flag to indicate if a receipt PDF has been found in this thread
-
-    // First pass: check if there's a receipt PDF in the message
-    if (msg.data.payload.parts) {
-      for (const part of msg.data.payload.parts) {
-        if (part.filename && part.filename.length > 0) {
-          const normalizedFileName = part.filename.toLowerCase();
-          if (
-            normalizedFileName.startsWith('receipt') &&
-            part.mimeType === 'application/pdf'
-          ) {
-            receiptFoundInThread = true;
-            break; // Found a receipt in this message
-          }
-        }
-      }
-    }
-
-    // Second pass: process the attachments based on whether receipt was found
-    if (msg.data.payload.parts) {
-      for (const part of msg.data.payload.parts) {
-        if (part.filename && part.filename.length > 0) {
-          const attachmentId = part.body.attachmentId;
-          if (!attachmentId) continue;
-
-          const attachment = await gmail.users.messages.attachments.get({
-            userId: 'me',
-            messageId: messageData.id,
-            id: attachmentId,
-          });
-
-          const data = attachment.data.data;
-          const buffer = Buffer.from(data, 'base64');
-
-          const contentType = part.mimeType;
-          const fileName = part.filename;
-          const isPDF = isPdfFile(contentType, fileName);
-
-          if (isPDF) {
-            const normalizedFileName = fileName.toLowerCase();
-            if (receiptFoundInThread) {
-              // If receipt is found in the thread, collect only PDFs starting with "receipt"
-              if (normalizedFileName.startsWith('receipt')) {
-                // Check for duplicate files
-                const fileHash = calculateBufferHash(buffer);
-                if (processedFilesSet.has(fileHash)) {
-                  console.log(`Skipping duplicate attachment: ${fileName}`);
-                  continue;
-                } else {
-                  processedFilesSet.add(fileHash);
-                }
-
-                const filePath = path.join(folderPath, sanitize(fileName));
-                fs.writeFileSync(filePath, buffer);
-                console.log(`Saved attachment: ${filePath}`);
-              }
-            } else {
-              // If no receipt is found, collect the PDF as usual
-              // Check for duplicate files
-              const fileHash = calculateBufferHash(buffer);
-              if (processedFilesSet.has(fileHash)) {
-                console.log(`Skipping duplicate attachment: ${fileName}`);
-                continue;
-              } else {
-                processedFilesSet.add(fileHash);
-              }
-
-              const filePath = path.join(folderPath, sanitize(fileName));
-              fs.writeFileSync(filePath, buffer);
-              console.log(`Saved attachment: ${filePath}`);
-            }
-          }
-        }
+        fs.writeFileSync(filePath, fileData);
+        console.log(`Saved attachment: ${filePath}`);
       }
     }
   }
 
-  return folderPath;
+  return attachmentsFolder;
 }
 
 // User Logout Route
