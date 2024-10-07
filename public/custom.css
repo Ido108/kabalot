@@ -1,0 +1,59 @@
+/* public/custom.css */
+
+body {
+    background-color: #f8f9fa;
+    font-family: Arial, sans-serif;
+  }
+  
+  .navbar-brand {
+    font-weight: bold;
+  }
+  
+  h3 {
+    margin-top: 20px;
+  }
+  
+  .btn {
+    width: 100%;
+  }
+  
+  .form-control {
+    border-radius: 0.25rem;
+  }
+  
+  .tab-content {
+    background-color: #fff;
+    border: 1px solid #dee2e6;
+    border-top: none;
+    padding: 20px;
+  }
+  
+  .progress-item {
+    margin-bottom: 15px;
+  }
+  
+  .progress {
+    height: 20px;
+  }
+  
+  .progress-bar {
+    transition: width 0.4s ease;
+  }
+  
+  #progress-log,
+  #gmail-progress-log {
+    max-height: 300px;
+    overflow-y: auto;
+  }
+  
+  /* Adjustments for RTL languages */
+  body {
+    direction: rtl;
+  }
+  
+  .form-label,
+  .nav-link,
+  .btn {
+    text-align: right;
+  }
+  
