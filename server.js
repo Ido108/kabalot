@@ -16,6 +16,7 @@ const { parse, format } = require('date-fns');
 const session = require('express-session');
 const events = require('events'); // For progress events
 const crypto = require('crypto'); // For file hashing
+const archiver = require('archiver'); // For creating ZIP files
 
 const app = express();
 
@@ -629,14 +630,14 @@ async function processFile(filePath, serviceAccountAuth, password) {
           processedFilePath = filePath; // Continue processing the unlocked file
         } else {
           console.log('Failed to unlock PDF:', filePath);
-          return null; // Skip processing if PDF is locked and couldn't be unlocked
+          return { expenseData: null, filePath: null }; // Skip processing if PDF is locked and couldn't be unlocked
         }
       } else {
         console.log('PDF is not encrypted. Proceeding without unlocking:', filePath);
       }
     } catch (error) {
       console.error('Error processing PDF:', filePath, error);
-      return null; // Skip this file if there's an error
+      return { expenseData: null, filePath: null }; // Skip this file if there's an error
     }
   } else {
     console.log('File is an image. Proceeding to process:', filePath);
@@ -644,7 +645,7 @@ async function processFile(filePath, serviceAccountAuth, password) {
 
   // Parse the receipt with Document AI
   const expenseData = await parseReceiptWithDocumentAI(processedFilePath, serviceAccountAuth);
-  return expenseData;
+  return { expenseData, filePath: processedFilePath };
 }
 
 /**
@@ -765,6 +766,7 @@ app.post('/upload', upload, async (req, res) => {
     emitProgress(); // Initial emit
 
     const expenses = [];
+    const processedFilePaths = []; // Collect processed file paths
     const serviceAccountAuth = authenticateServiceAccount();
     await serviceAccountAuth.authorize();
 
@@ -790,10 +792,15 @@ app.post('/upload', upload, async (req, res) => {
       emitProgress();
 
       // Process the file
-      const expenseData = await processFile(filePath, serviceAccountAuth, idNumber);
+      const { expenseData, filePath: processedFilePath } = await processFile(
+        filePath,
+        serviceAccountAuth,
+        idNumber
+      );
 
-      if (expenseData) {
+      if (expenseData && processedFilePath) {
         expenses.push(expenseData);
+        processedFilePaths.push(processedFilePath);
         progressData[i].status = 'Completed';
         progressData[i].progress = 100;
       } else {
@@ -818,12 +825,23 @@ app.post('/upload', upload, async (req, res) => {
       );
       console.log('Expense summary Excel file created.');
 
-      // Provide a download link to the Excel file
-      const excelFileName = encodeURIComponent(path.basename(excelPath));
-      const csvUrl = `/download/${excelFileName}`;
+      // Create ZIP file including processed files and Excel
+      const zipFileName = await createZipFile(
+        processedFilePaths,
+        excelPath,
+        INPUT_FOLDER
+      );
+
+      // Provide a download link to the ZIP file
+      const zipFileEncodedName = encodeURIComponent(path.basename(zipFileName));
+      const zipUrl = `/download-zip/${zipFileEncodedName}`;
       progressEmitter.emit('progress', [
         ...progressData,
-        { status: 'Processing complete. Download the file below.', progress: 100, downloadLink: csvUrl },
+        {
+          status: 'Processing complete. Download the files below.',
+          progress: 100,
+          downloadLink: zipUrl,
+        },
       ]);
     } else {
       progressEmitter.emit('progress', [
@@ -834,11 +852,82 @@ app.post('/upload', upload, async (req, res) => {
   } catch (processingError) {
     console.error('Processing Error:', processingError.message);
     progressEmitter.emit('progress', [
-      ...progressData,
       { status: `Processing Error: ${processingError.message}`, progress: 100 },
     ]);
   } finally {
     delete uploadProgressEmitters[uploadId];
+  }
+});
+
+// Function to create a ZIP file containing processed files and the Excel sheet
+async function createZipFile(filePaths, excelPath, folderPath) {
+  const baseFileName = 'processed_files';
+  const zipFilePath = generateUniqueFilename(baseFileName, 'zip', folderPath);
+
+  return new Promise((resolve, reject) => {
+    const output = fs.createWriteStream(zipFilePath);
+    const archive = archiver('zip', { zlib: { level: 9 } });
+
+    output.on('close', () => {
+      console.log(`ZIP file created at: ${zipFilePath}`);
+      resolve(zipFilePath);
+    });
+
+    archive.on('error', (err) => {
+      console.error('Error creating ZIP file:', err.message);
+      reject(err);
+    });
+
+    archive.pipe(output);
+
+    // Add processed files to the ZIP
+    for (const filePath of filePaths) {
+      const fileName = path.basename(filePath);
+      archive.file(filePath, { name: `processed_files/${fileName}` });
+    }
+
+    // Add the Excel file to the ZIP
+    const excelFileName = path.basename(excelPath);
+    archive.file(excelPath, { name: excelFileName });
+
+    archive.finalize();
+  });
+}
+
+/**
+ * Generate a unique filename to prevent collisions
+ */
+function generateUniqueFilename(baseName, extension, folderPath) {
+  let fileNumber = 1;
+  let fileName = `${baseName}.${extension}`;
+  let fullPath = path.join(folderPath, fileName);
+
+  while (fs.existsSync(fullPath)) {
+    fileName = `${baseName} (${fileNumber}).${extension}`;
+    fullPath = path.join(folderPath, fileName);
+    fileNumber++;
+  }
+
+  return fullPath;
+}
+
+// Download ZIP Route - Serve the generated ZIP file
+app.get('/download-zip/:filename', (req, res) => {
+  const { filename } = req.params;
+  const decodedFilename = decodeURIComponent(filename);
+
+  const filePath = path.join(INPUT_FOLDER, decodedFilename);
+
+  if (fs.existsSync(filePath)) {
+    res.setHeader('Content-Type', 'application/zip');
+    res.download(filePath, decodedFilename, (err) => {
+      if (err) {
+        console.error('Download Error:', err.message);
+        res.status(500).send('Error downloading the file.');
+      }
+    });
+  } else {
+    res.status(404).send('File not found.');
   }
 });
 
