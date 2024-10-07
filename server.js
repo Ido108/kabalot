@@ -930,7 +930,6 @@ app.get('/download-zip/:filename', (req, res) => {
     res.status(404).send('File not found.');
   }
 });
-
 // Endpoint for Upload Progress
 app.get('/upload-progress/:uploadId', (req, res) => {
   const uploadId = req.params.uploadId;
@@ -984,6 +983,26 @@ app.get('/download/:filename', (req, res) => {
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     );
+    res.download(filePath, decodedFilename, (err) => {
+      if (err) {
+        console.error('Download Error:', err.message);
+        res.status(500).send('Error downloading the file.');
+      }
+    });
+  } else {
+    res.status(404).send('File not found.');
+  }
+});
+
+// Download ZIP Route - Serve the generated ZIP file
+app.get('/download-zip/:filename', (req, res) => {
+  const { filename } = req.params;
+  const decodedFilename = decodeURIComponent(filename);
+
+  const filePath = path.join(INPUT_FOLDER, decodedFilename);
+
+  if (fs.existsSync(filePath)) {
+    res.setHeader('Content-Type', 'application/zip');
     res.download(filePath, decodedFilename, (err) => {
       if (err) {
         console.error('Download Error:', err.message);
@@ -1168,6 +1187,7 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, async (req, res)
     progressEmitter.emit('progress', [{ status: 'Processing files...', progress: 30 }]);
 
     const expenses = [];
+    const processedFilePaths = []; // Collect processed file paths
     const serviceAccountAuth = authenticateServiceAccount();
     await serviceAccountAuth.authorize();
 
@@ -1190,10 +1210,15 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, async (req, res)
       progressEmitter.emit('progress', [{ status: `Processing ${fileName}...`, progress: progressPercent }]);
 
       // Process the file
-      const expenseData = await processFile(filePath, serviceAccountAuth, idNumber);
+      const { expenseData, filePath: processedFilePath } = await processFile(
+        filePath,
+        serviceAccountAuth,
+        idNumber
+      );
 
-      if (expenseData) {
+      if (expenseData && processedFilePath) {
         expenses.push(expenseData);
+        processedFilePaths.push(processedFilePath);
       }
     }
 
@@ -1209,11 +1234,26 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, async (req, res)
     console.log('Expenses extracted:', expenses.length);
     console.log('Excel file created at:', excelPath);
 
-    // Provide download link
-    const excelFileName = encodeURIComponent(path.basename(excelPath));
-    const csvUrl = `/download/${excelFileName}`;
+    progressEmitter.emit('progress', [{ status: 'Creating ZIP file...', progress: 90 }]);
 
-    progressEmitter.emit('progress', [{ status: 'Processing complete. Download the file below.', progress: 100, downloadLink: csvUrl }]);
+    // Create ZIP file including processed files and Excel
+    const zipFileName = await createZipFile(
+      processedFilePaths,
+      excelPath,
+      attachmentsFolder
+    );
+
+    // Provide download link
+    const zipFileEncodedName = encodeURIComponent(path.basename(zipFileName));
+    const zipUrl = `/download-zip/${zipFileEncodedName}`;
+
+    progressEmitter.emit('progress', [
+      {
+        status: 'Processing complete. Download the files below.',
+        progress: 100,
+        downloadLink: zipUrl,
+      },
+    ]);
 
   } catch (error) {
     console.error('Error processing Gmail attachments:', error);
