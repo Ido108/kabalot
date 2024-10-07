@@ -62,6 +62,8 @@ if (!fs.existsSync(INPUT_FOLDER)) {
 console.log(`Input folder: ${INPUT_FOLDER}`);
 
 const PDFCO_API_KEY = process.env.PDFCO_API_KEY;
+const PASSWORD_PROTECTED_PDF_PASSWORD =
+  process.env.PASSWORD_PROTECTED_PDF_PASSWORD || 'your-default-password';
 
 // Google Document AI Configuration
 const DOCUMENT_AI_CONFIG = {
@@ -133,7 +135,10 @@ async function getUsdToIlsExchangeRate(date) {
  * @param {string} password - Password to unlock the PDF
  * @returns {string|null} - Path to the unlocked PDF or null if failed
  */
-async function unlockPdf(filePath, password) {
+async function unlockPdf(
+  filePath,
+  password = PASSWORD_PROTECTED_PDF_PASSWORD
+) {
   if (!PDFCO_API_KEY) {
     throw new Error('PDFCO_API_KEY is not set in environment variables.');
   }
@@ -210,36 +215,6 @@ async function unlockPdf(filePath, password) {
       console.error('Error in unlockPdf:', error.message);
     }
     return null;
-  }
-}
-
-/**
- * Check if a PDF is encrypted (password-protected)
- * @param {string} filePath - Path to the PDF file
- * @returns {Promise<boolean>} - Returns true if encrypted, false otherwise
- */
-async function isPdfEncrypted(filePath) {
-  try {
-    const pdfBuffer = await fs.promises.readFile(filePath);
-    const pdfDoc = await PDFDocument.load(pdfBuffer, { ignoreEncryption: true });
-    
-    // Check if the PDF is encrypted
-    if (pdfDoc.isEncrypted) {
-      return true;
-    }
-
-    // Additional check: try to access a page
-    try {
-      pdfDoc.getPage(0);
-      return false; // If we can access a page, it's not encrypted
-    } catch (error) {
-      // If we can't access a page, it might be encrypted
-      return true;
-    }
-  } catch (error) {
-    console.error('Error checking PDF encryption:', error.message);
-    // If there's an error, assume it's encrypted to be safe
-    return true;
   }
 }
 
@@ -506,7 +481,7 @@ async function parseReceiptWithDocumentAI(filePath, serviceAccountAuth) {
  * @param {Array} expenses - Array of expense objects
  * @param {string} folderPath - Path to the folder where Excel file will be saved
  */
-async function createExpenseExcel(expenses, folderPath, startDate, endDate, fullName) {
+async function createExpenseExcel(expenses, folderPath, filePrefix, startDate, endDate, fullName) {
   // Ensure valid dates
   const validStartDate = parse(startDate, 'yyyy-MM-dd', new Date());
   const validEndDate = parse(endDate, 'yyyy-MM-dd', new Date());
@@ -516,7 +491,7 @@ async function createExpenseExcel(expenses, folderPath, startDate, endDate, full
   const endDateFormatted = format(validEndDate, 'dd-MM-yy');
   
   // Create base filename
-  let baseFileName = `${startDateFormatted}-to-${endDateFormatted}-${fullName.replace(/\s+/g, '_')}`;
+  let baseFileName = `${filePrefix}-${startDateFormatted}-to-${endDateFormatted}-${fullName.replace(/\s+/g, '_')}`;
   let fileName = `${baseFileName}.xlsx`;
   let fullPath = path.join(folderPath, fileName);
   
@@ -627,7 +602,7 @@ async function createExpenseExcel(expenses, folderPath, startDate, endDate, full
 /**
  * Process a single file
  */
-async function processFile(filePath, serviceAccountAuth, password) {
+async function processFile(filePath, serviceAccountAuth) {
   const ext = path.extname(filePath).toLowerCase();
   const isPDF = ext === '.pdf';
   let processedFilePath = filePath;
@@ -638,8 +613,8 @@ async function processFile(filePath, serviceAccountAuth, password) {
       const isEncrypted = await isPdfEncrypted(filePath);
       if (isEncrypted) {
         console.log('PDF is encrypted. Attempting to unlock:', filePath);
-        // Attempt to unlock PDF with provided password
-        const unlockedPath = await unlockPdf(filePath, password);
+        // Attempt to unlock PDF
+        const unlockedPath = await unlockPdf(filePath);
         if (unlockedPath) {
           // Overwrite the original file with the unlocked PDF
           fs.copyFileSync(unlockedPath, filePath);
@@ -728,8 +703,7 @@ app.post('/upload', upload, async (req, res) => {
   try {
     const files = req.files.map((file) => file.path);
     const totalFiles = files.length;
-    const name = req.body.name || ''; // Optional name
-    const idNumber = req.body.idNumber || ''; // Optional ID number for PDF password
+    const filePrefix = req.body.filePrefix || 'סיכום הוצאות';
 
     const progressData = files.map((filePath) => ({
       fileName: path.basename(filePath),
@@ -745,7 +719,6 @@ app.post('/upload', upload, async (req, res) => {
     emitProgress(); // Initial emit
 
     const expenses = [];
-    const processedFilePaths = []; // Collect processed file paths
     const serviceAccountAuth = authenticateServiceAccount();
     await serviceAccountAuth.authorize();
 
@@ -759,15 +732,10 @@ app.post('/upload', upload, async (req, res) => {
       emitProgress();
 
       // Process the file
-      const { expenseData, filePath: processedFilePath } = await processFile(
-        filePath,
-        serviceAccountAuth,
-        idNumber
-      );
+      const expenseData = await processFile(filePath, serviceAccountAuth);
 
-      if (expenseData && processedFilePath) {
+      if (expenseData) {
         expenses.push(expenseData);
-        processedFilePaths.push(processedFilePath);
         progressData[i].status = 'Completed';
         progressData[i].progress = 100;
       } else {
@@ -787,6 +755,7 @@ app.post('/upload', upload, async (req, res) => {
       const excelPath = await createExpenseExcel(
         expenses,
         INPUT_FOLDER,
+        filePrefix,
         startDate,
         endDate,
         fullName
@@ -1021,7 +990,8 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, async (req, res)
 
   try {
     const auth = req.oAuth2Client;
-    const { startDate, endDate, name, idNumber } = req.body;
+    const { startDate, endDate, fullName, filePrefix } = req.body;
+    const customPrefix = filePrefix || 'סיכום הוצאות'; // Use default if not provided
 
     console.log('Processing Gmail attachments from', startDate, 'to', endDate);
 
@@ -1054,7 +1024,6 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, async (req, res)
     progressEmitter.emit('progress', [{ status: 'Processing files...', progress: 30 }]);
 
     const expenses = [];
-    const processedFilePaths = []; // Collect processed file paths
     const serviceAccountAuth = authenticateServiceAccount();
     await serviceAccountAuth.authorize();
 
@@ -1067,22 +1036,19 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, async (req, res)
       progressEmitter.emit('progress', [{ status: `Processing ${fileName}...`, progress: progressPercent }]);
 
       // Process the file
-      const { expenseData, filePath: processedFilePath } = await processFile(
-        filePath,
-        serviceAccountAuth,
-        idNumber
-      );
+      const expenseData = await processFile(filePath, serviceAccountAuth);
 
-      if (expenseData && processedFilePath) {
+      if (expenseData) {
         expenses.push(expenseData);
-        processedFilePaths.push(processedFilePath);
       }
     }
+
     progressEmitter.emit('progress', [{ status: 'Creating Excel file...', progress: 80 }]);
 
     const excelPath = await createExpenseExcel(
       expenses,
       attachmentsFolder,
+      customPrefix,
       startDate,
       endDate,
       fullName

@@ -44,23 +44,24 @@
         />
       </div>
       <div class="mb-3">
-        <label for="name" class="form-label">שם (אופציונלי)</label>
+        <label for="fullName" class="form-label">שם מלא</label>
         <input
           type="text"
-          id="name"
-          name="name"
+          id="fullName"
+          name="fullName"
           class="form-control"
-          placeholder="הכנס את שמך (אופציונלי)"
+          required
+          placeholder="הכנס את שמך המלא"
         />
       </div>
       <div class="mb-3">
-        <label for="idNumber" class="form-label">מספר ת"ז (לפתיחת קבצים מוגנים)</label>
+        <label for="filePrefix" class="form-label">קידומת קובץ</label>
         <input
           type="text"
-          id="idNumber"
-          name="idNumber"
+          id="filePrefix"
+          name="filePrefix"
           class="form-control"
-          placeholder="הכנס את מספר תעודת הזהות שלך"
+          placeholder="הכנס קידומת עבור קובץ הפלט"
         />
       </div>
       <div class="mb-3">

@@ -2,7 +2,7 @@
 <html lang="he">
 <head>
   <meta charset="UTF-8">
-  <title>עיבוד מסמכי הוצאות- סורק קבלות pdf ותמונות ומוריד עליך קובץ אקסא מפלצתי</title>
+  <title>עיבוד מסמכים</title>
   <!-- Bootstrap 5 CSS -->
   <link
     rel="stylesheet"
@@ -16,7 +16,7 @@
   <!-- Navigation Bar -->
   <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
     <div class="container-fluid">
-      <a class="navbar-brand" href="#">עיבוד מסמכי הוצאות</a>
+      <a class="navbar-brand" href="#">עיבוד מסמכים</a>
     </div>
   </nav>
 
@@ -77,23 +77,13 @@
               />
             </div>
             <div class="mb-3">
-              <label for="name" class="form-label">שם (אופציונלי)</label>
+              <label for="filePrefix" class="form-label">קידומת קובץ</label>
               <input
                 type="text"
-                id="name"
-                name="name"
+                id="filePrefix"
+                name="filePrefix"
                 class="form-control"
-                placeholder="הכנס את שמך (אופציונלי)"
-              />
-            </div>
-            <div class="mb-3">
-              <label for="idNumber" class="form-label">מספר ת"ז (לפתיחת קבצים מוגנים)</label>
-              <input
-                type="text"
-                id="idNumber"
-                name="idNumber"
-                class="form-control"
-                placeholder="הכנס את מספר תעודת הזהות שלך"
+                placeholder="הכנס קידומת עבור קובץ הפלט"
               />
             </div>
             <button type="button" id="upload-button" class="btn btn-primary">
@@ -137,7 +127,7 @@
 
   <!-- Footer -->
   <div class="footer">
-    <p>&copy; 2024 עידו הנסיך</p>
+    <p>&copy; 2023 עיבוד מסמכים</p>
   </div>
 
   <!-- Bootstrap 5 JS -->
@@ -152,8 +142,7 @@
     const uploadButton = document.getElementById('upload-button');
     const fileInput = document.getElementById('file-input');
     const progressLog = document.getElementById('progress-log');
-    const nameInput = document.getElementById('name');
-    const idNumberInput = document.getElementById('idNumber');
+    const filePrefixInput = document.getElementById('filePrefix');
 
     uploadButton.addEventListener('click', () => {
       const files = fileInput.files;
@@ -162,15 +151,13 @@
         return;
       }
 
-      const name = nameInput.value;
-      const idNumber = idNumberInput.value;
-      uploadFiles(files, name, idNumber);
+      const filePrefix = filePrefixInput.value;
+      uploadFiles(files, filePrefix);
     });
 
-    function uploadFiles(files, name, idNumber) {
+    function uploadFiles(files, filePrefix) {
       const formData = new FormData();
-      formData.append('name', name);
-      formData.append('idNumber', idNumber);
+      formData.append('filePrefix', filePrefix);
       for (const file of files) {
         formData.append('files', file);
       }
