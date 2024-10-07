@@ -1,25 +1,28 @@
 {
-  "name": "document-processing-app",
+  "name": "expense-processor",
   "version": "1.0.0",
-  "description": "An application for processing documents and extracting expenses.",
+  "description": "Expense processing application",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
-  "author": "Your Name",
-  "license": "ISC",
+  "engines": {
+    "node": "18.x",
+    "npm": "6.x"
+  },
   "dependencies": {
     "axios": "^0.27.2",
     "cors": "^2.8.5",
     "date-fns": "^2.28.0",
-    "ejs": "^3.1.8",
+    "dotenv": "^16.0.1",
+    "ejs": "^3.1.6",
     "exceljs": "^4.3.0",
     "express": "^4.18.1",
-    "express-session": "^1.17.3",
+    "express-session": "^1.18.0",
     "form-data": "^4.0.0",
-    "fs-extra": "^10.0.1",
-    "googleapis": "^97.0.0",
-    "multer": "^1.4.4",
+    "fs-extra": "^10.1.0",
+    "googleapis": "^91.0.0",
+    "multer": "^1.4.5-lts.1",
     "pdf-lib": "^1.17.1",
     "sanitize-filename": "^1.6.3"
   }
