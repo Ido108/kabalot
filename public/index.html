@@ -1,333 +1,74 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <!-- Include UTF-8 encoding for Hebrew or other non-ASCII characters -->
-  <meta http-equiv="X-UA-Compatible" content="IE=edge">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Document Processor</title>
-  <!-- Bootstrap 5 CSS -->
-  <link
-    rel="stylesheet"
-    href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
-    integrity="sha384-9ndCyUaQdAtyhNIZv9SUpStjYpEy4xknZlQGZvjx5p7Cw0AmMVFZ6fWvF1yKmpWZ"
-    crossorigin="anonymous"
-  />
-  <!-- Custom Styles -->
-  <link rel="stylesheet" href="/custom.css" />
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document & Image Processor</title>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <!-- Navigation Bar -->
-  <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
-    <div class="container-fluid">
-      <a class="navbar-brand" href="#">Document Processor</a>
-    </div>
-  </nav>
+    <div class="container mt-5">
+        <h1 id="document-image-processor" class="text-center mb-4">Document & Image Processor</h1>
 
-  <!-- Tabs Navigation -->
-  <ul class="nav nav-tabs mt-3" id="myTab" role="tablist">
-    <li class="nav-item" role="presentation">
-      <button
-        class="nav-link active"
-        id="upload-tab"
-        data-bs-toggle="tab"
-        data-bs-target="#upload"
-        type="button"
-        role="tab"
-        aria-controls="upload"
-        aria-selected="true"
-      >
-        Upload Files
-      </button>
-    </li>
-    <li class="nav-item" role="presentation">
-      <button
-        class="nav-link"
-        id="gmail-tab"
-        data-bs-toggle="tab"
-        data-bs-target="#gmail"
-        type="button"
-        role="tab"
-        aria-controls="gmail"
-        aria-selected="false"
-      >
-        Process Gmail Attachments
-      </button>
-    </li>
-  </ul>
-
-  <!-- Tab Content -->
-  <div class="tab-content" id="myTabContent">
-    <!-- Upload Files Tab -->
-    <div
-      class="tab-pane fade show active"
-      id="upload"
-      role="tabpanel"
-      aria-labelledby="upload-tab"
-    >
-      <div class="container mt-4">
-        <h3>Upload Files</h3>
-        <form id="upload-form">
-          <div class="mb-3">
-            <label for="file-input" class="form-label">Select Files</label>
-            <input
-              class="form-control"
-              type="file"
-              id="file-input"
-              name="files"
-              multiple
-              accept=".pdf,.jpg,.jpeg,.png,.tiff,.tif"
-            />
-          </div>
-          <div class="mb-3">
-            <label for="filePrefix" class="form-label">File Prefix</label>
-            <input
-              type="text"
-              id="filePrefix"
-              name="filePrefix"
-              class="form-control"
-              placeholder="Enter a prefix for the output file"
-            />
-          </div>
-          <button type="button" id="upload-button" class="btn btn-primary">
-            Start Processing
-          </button>
-        </form>
-        <!-- Progress Log -->
-        <div id="progress-log" class="mt-4"></div>
-      </div>
-    </div>
-
-    <!-- Gmail Processing Tab -->
-    <div
-      class="tab-pane fade"
-      id="gmail"
-      role="tabpanel"
-      aria-labelledby="gmail-tab"
-    >
-      <div class="container mt-4">
-        <h3>Process Gmail Attachments</h3>
-        <form id="gmail-form">
-          <div class="mb-3">
-            <label for="email" class="form-label">Gmail Address</label>
-            <input
-              type="email"
-              id="email"
-              name="email"
-              class="form-control"
-              required
-              placeholder="Enter your Gmail address"
-            />
-          </div>
-          <div class="mb-3">
-            <label for="startDate" class="form-label">Start Date</label>
-            <input
-              type="date"
-              id="startDate"
-              name="startDate"
-              class="form-control"
-              required
-            />
-          </div>
-          <div class="mb-3">
-            <label for="endDate" class="form-label">End Date</label>
-            <input
-              type="date"
-              id="endDate"
-              name="endDate"
-              class="form-control"
-              required
-            />
-          </div>
-          <div class="mb-3">
-            <label for="fullName" class="form-label">Full Name</label>
-            <input
-              type="text"
-              id="fullName"
-              name="fullName"
-              class="form-control"
-              required
-              placeholder="Enter your full name"
-            />
-          </div>
-          <div class="mb-3">
-            <label for="filePrefix" class="form-label">File Prefix</label>
-            <input
-              type="text"
-              id="filePrefix"
-              name="filePrefix"
-              class="form-control"
-              placeholder="Enter a custom prefix for the output file"
-            />
-          </div>
-          <div class="mb-3">
-            <label for="additional-files" class="form-label">Upload Additional Files</label>
-            <input
-              class="form-control"
-              type="file"
-              id="additional-files"
-              name="additionalFiles"
-              multiple
-              accept=".pdf,.jpg,.jpeg,.png,.tiff,.tif"
-            />
-          </div>
-          <button type="button" id="gmail-button" class="btn btn-success">
-            Start Processing
-          </button>
-        </form>
-        <!-- Gmail Progress Log -->
-        <div id="gmail-progress-log" class="mt-4"></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Bootstrap 5 JS -->
-  <script
-    src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"
-    integrity="sha384-Q8i/X+965DzO0rT7abK41JStQIAqVgRVzpbzo5smXKp4YfRvH+8abtTE1Pi6jizo"
-    crossorigin="anonymous"
-  ></script>
-
-  <!-- Custom JavaScript -->
-  <script>
-    // File Uploads
-    const uploadButton = document.getElementById('upload-button');
-    const fileInput = document.getElementById('file-input');
-    const progressLog = document.getElementById('progress-log');
-    const filePrefixInput = document.getElementById('filePrefix');
-
-    uploadButton.addEventListener('click', () => {
-      const files = fileInput.files;
-      if (files.length === 0) {
-        alert('Please select files to upload.');
-        return;
-      }
-
-      const filePrefix = filePrefixInput.value;
-      uploadFiles(files, filePrefix);
-    });
-
-    function uploadFiles(files, filePrefix) {
-      const formData = new FormData();
-      formData.append('filePrefix', filePrefix);
-      for (const file of files) {
-        formData.append('files', file);
-      }
-
-      fetch('/upload', {
-        method: 'POST',
-        body: formData,
-      })
-        .then((response) => response.json())
-        .then((data) => {
-          const uploadId = data.uploadId;
-
-          // Start listening to progress events
-          const eventSource = new EventSource(`/upload-progress/${uploadId}`);
-          eventSource.onmessage = function (e) {
-            const progressData = JSON.parse(e.data);
-            updateProgressLog(progressData);
-          };
-
-          eventSource.onerror = function () {
-            console.error('EventSource failed.');
-            eventSource.close();
-          };
-        })
-        .catch((error) => {
-          console.error('Upload failed:', error);
-        });
-    }
-
-    function updateProgressLog(progressData) {
-      progressLog.innerHTML = '';
-      progressData.forEach((item) => {
-        progressLog.innerHTML += `
-          <div class="progress-item">
-            <p>${item.fileName}: ${item.status}</p>
-            <div class="progress">
-              <div
-                class="progress-bar"
-                role="progressbar"
-                style="width: ${item.progress}%"
-                aria-valuenow="${item.progress}"
-                aria-valuemin="0"
-                aria-valuemax="100"
-              ></div>
+        <form action="/upload" method="post" enctype="multipart/form-data">
+            <div id="dropzone" class="dropzone">
+                <input type="file" name="files" multiple accept=".pdf,.jpg,.jpeg,.png,.tiff,.tif" style="display: none;" id="fileInput">
+                <p>Tap to Select Files</p>
             </div>
-          </div>
-        `;
-      });
-    }
-
-    // Gmail Processing
-    const gmailButton = document.getElementById('gmail-button');
-    const gmailForm = document.getElementById('gmail-form');
-    const gmailProgressLog = document.getElementById('gmail-progress-log');
-    const additionalFilesInput = document.getElementById('additional-files');
-
-    gmailButton.addEventListener('click', () => {
-      const email = document.getElementById('email').value;
-      if (!email) {
-        alert('Please enter your Gmail address.');
-        return;
-      }
-
-      startGmailProcessing();
-    });
-
-    function startGmailProcessing() {
-      const formData = new FormData(gmailForm);
-      const additionalFiles = additionalFilesInput.files;
-      for (const file of additionalFiles) {
-        formData.append('additionalFiles', file);
-      }
-
-      fetch('/process-gmail', {
-        method: 'POST',
-        body: formData,
-      })
-        .then((response) => response.json())
-        .then((data) => {
-          const sessionId = data.sessionId;
-
-          // Start listening to progress events
-          const eventSource = new EventSource(`/gmail-progress/${sessionId}`);
-          eventSource.onmessage = function (e) {
-            const progressData = JSON.parse(e.data);
-            updateGmailProgressLog(progressData);
-          };
-
-          eventSource.onerror = function () {
-            console.error('EventSource failed.');
-            eventSource.close();
-          };
-        })
-        .catch((error) => {
-          console.error('Gmail processing failed:', error);
-        });
-    }
-
-    function updateGmailProgressLog(progressData) {
-      gmailProgressLog.innerHTML = '';
-      progressData.forEach((item) => {
-        gmailProgressLog.innerHTML += `
-          <div class="progress-item">
-            <p>${item.status}</p>
-            <div class="progress">
-              <div
-                class="progress-bar"
-                role="progressbar"
-                style="width: ${item.progress}%"
-                aria-valuenow="${item.progress}"
-                aria-valuemin="0"
-                aria-valuemax="100"
-              ></div>
+            <div id="upload-message" class="text-center"></div>
+            <div class="form-group mt-3">
+                <label for="FullName">זרוק איזה שם על הקובץ:</label>
+                <input type="text" id="FullName" name="FullName" class="form-control" placeholder="קבלות יולי אוגוסט">
             </div>
-          </div>
-        `;
-      });
-    }
-  </script>
+            <button type="submit" class="btn btn-primary btn-block mt-3">Start Processing</button>
+        </form>
+
+        <hr>
+
+        <h2 class="text-center mb-4">Process Receipts from Gmail</h2>
+        <form action="/start-gmail-auth" method="post">
+            <div class="form-group">
+                <label for="email">Enter Your Gmail Address:</label>
+                <input type="email" id="email" name="email" class="form-control" required>
+            </div>
+            <button type="submit" class="btn btn-success btn-block">Authorize Gmail Access</button>
+        </form>
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.5.3/dist/umd/popper.min.js"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
+    <script>
+        const dropzone = document.getElementById('dropzone');
+        const fileInput = document.getElementById('fileInput');
+        const uploadMessage = document.getElementById('upload-message');
+
+        dropzone.addEventListener('click', () => fileInput.click());
+
+        fileInput.addEventListener('change', () => {
+            if (fileInput.files.length > 0) {
+                uploadMessage.textContent = `${fileInput.files.length} file(s) selected`;
+            } else {
+                uploadMessage.textContent = '';
+            }
+        });
+
+        dropzone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropzone.classList.add('dragover');
+        });
+
+        dropzone.addEventListener('dragleave', () => {
+            dropzone.classList.remove('dragover');
+        });
+
+        dropzone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropzone.classList.remove('dragover');
+            fileInput.files = e.dataTransfer.files;
+            uploadMessage.textContent = `${fileInput.files.length} file(s) selected`;
+        });
+    </script>
 </body>
 </html>

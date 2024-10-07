@@ -14,7 +14,6 @@ const cors = require('cors');
 const Excel = require('exceljs');
 const { parse, format } = require('date-fns');
 const session = require('express-session');
-const events = require('events'); // For progress events
 
 const app = express();
 
@@ -65,11 +64,11 @@ const PDFCO_API_KEY = process.env.PDFCO_API_KEY;
 const PASSWORD_PROTECTED_PDF_PASSWORD =
   process.env.PASSWORD_PROTECTED_PDF_PASSWORD || 'your-default-password';
 
-// Google Document AI Configuration
+// Google Document AI Configuration (Unchanged)
 const DOCUMENT_AI_CONFIG = {
-  projectId: process.env.DOCUMENT_AI_PROJECT_ID || 'your-project-id', // Replace with your GCP project ID
-  location: process.env.DOCUMENT_AI_LOCATION || 'us', // Processor location
-  processorId: process.env.DOCUMENT_AI_PROCESSOR_ID || 'your-processor-id', // Your actual processor ID
+  projectId: 'eighth-block-311611', // Replace with your GCP project ID
+  location: 'us', // Processor location
+  processorId: '78ac8067f0c37ec6', // Your actual processor ID
 };
 
 // Use base64 encoded service account credentials from environment variable
@@ -123,10 +122,27 @@ function cleanAndParseAmount(amountStr) {
  * @param {string} date - Date in 'YYYY-MM-DD' format
  */
 async function getUsdToIlsExchangeRate(date) {
-  // Implement your method to get the exchange rate
-  // For the purpose of this example, we'll return a fixed rate
-  const exchangeRate = 3.5; // Replace with actual exchange rate fetching logic
-  return exchangeRate;
+  const apiKey = process.env.EXCHANGE_RATE_API_KEY; // Make sure to set this in your .env file
+  const [year, month, day] = date.split('-');
+  const url = `https://v6.exchangerate-api.com/v6/${apiKey}/history/USD/${year}/${month}/${day}`;
+
+  try {
+    const response = await axios.get(url);
+    if (response.data && response.data.result === 'success') {
+      const ilsRate = response.data.conversion_rates.ILS;
+      console.log(`Exchange rate on ${date}: ${ilsRate}`);
+      return ilsRate;
+    } else {
+      console.log(`Error retrieving exchange rate for ${date}. Defaulting to 3.7404.`);
+      return 3.7404;
+    }
+  } catch (error) {
+    console.error(`Error fetching exchange rate for ${date}:`, error.message);
+    if (error.response && error.response.data && error.response.data['error-type']) {
+      console.error(`API Error Type: ${error.response.data['error-type']}`);
+    }
+    return 3.7404; // Default rate
+  }
 }
 
 /**
@@ -247,14 +263,13 @@ async function isPdfEncrypted(filePath) {
     return true;
   }
 }
-
 /**
  * Detect Currency using regex
  * @param {string} value - Text containing the amount
  * @returns {string} - Detected currency code ('USD' or 'ILS')
  */
 function detectCurrency(value) {
-  const usdRegex = /\$|USD/; // Detect both $ and USD
+  const usdRegex = /\$|USD/; // Updated to detect both $ and USD
   const ilsRegex = /₪|ILS|ש"ח/;
 
   if (usdRegex.test(value)) {
@@ -491,7 +506,7 @@ async function createExpenseExcel(expenses, folderPath, filePrefix, startDate, e
   const endDateFormatted = format(validEndDate, 'dd-MM-yy');
   
   // Create base filename
-  let baseFileName = `${filePrefix}-${startDateFormatted}-to-${endDateFormatted}-${fullName.replace(/\s+/g, '_')}`;
+  let baseFileName = `${startDateFormatted}-to-${endDateFormatted}-${fullName.replace(/\s+/g, '_')}`;
   let fileName = `${baseFileName}.xlsx`;
   let fullPath = path.join(folderPath, fileName);
   
@@ -598,47 +613,248 @@ async function createExpenseExcel(expenses, folderPath, filePrefix, startDate, e
     throw new Error('Failed to save Excel file');
   }
 }
-
 /**
- * Process a single file
+ * Process Files (PDFs and Images)
+ * @param {Array} files - Array of file paths
+ * @param {string} folderPath - Path to save the Excel file
+ * @returns {Array} - Array of extracted expense data
  */
-async function processFile(filePath, serviceAccountAuth) {
-  const ext = path.extname(filePath).toLowerCase();
-  const isPDF = ext === '.pdf';
-  let processedFilePath = filePath;
+async function processFiles(files, folderPath, filePrefix, startDate, endDate, fullName) {
+  // Authenticate with Service Account for Document AI
+  const serviceAccountAuth = authenticateServiceAccount();
+  await serviceAccountAuth.authorize(); // Ensure the client is authorized
 
-  if (isPDF) {
-    try {
-      // Check if the PDF is encrypted
-      const isEncrypted = await isPdfEncrypted(filePath);
-      if (isEncrypted) {
-        console.log('PDF is encrypted. Attempting to unlock:', filePath);
-        // Attempt to unlock PDF
-        const unlockedPath = await unlockPdf(filePath);
-        if (unlockedPath) {
-          // Overwrite the original file with the unlocked PDF
-          fs.copyFileSync(unlockedPath, filePath);
-          fs.unlinkSync(unlockedPath); // Remove the temporary unlocked file
-          console.log('PDF unlocked and overwritten:', filePath);
-          processedFilePath = filePath; // Continue processing the unlocked file
+  const expenses = [];
+
+  for (const filePath of files) {
+    console.log(`Processing file: ${filePath}`);
+
+    const ext = path.extname(filePath).toLowerCase();
+    const isPDF = ext === '.pdf';
+
+    let processedFilePath = filePath;
+
+    if (isPDF) {
+      try {
+        // Check if the PDF is encrypted
+        const isEncrypted = await isPdfEncrypted(filePath);
+        if (isEncrypted) {
+          console.log('PDF is encrypted. Attempting to unlock:', filePath);
+          // Attempt to unlock PDF
+          const unlockedPath = await unlockPdf(filePath);
+          if (unlockedPath) {
+            // Overwrite the original file with the unlocked PDF
+            fs.copyFileSync(unlockedPath, filePath);
+            fs.unlinkSync(unlockedPath); // Remove the temporary unlocked file
+            console.log('PDF unlocked and overwritten:', filePath);
+            processedFilePath = filePath; // Continue processing the unlocked file
+          } else {
+            console.log('Failed to unlock PDF:', filePath);
+            continue; // Skip processing if PDF is locked and couldn't be unlocked
+          }
         } else {
-          console.log('Failed to unlock PDF:', filePath);
-          return null; // Skip processing if PDF is locked and couldn't be unlocked
+          console.log('PDF is not encrypted. Proceeding without unlocking:', filePath);
         }
-      } else {
-        console.log('PDF is not encrypted. Proceeding without unlocking:', filePath);
+      } catch (error) {
+        console.error('Error processing PDF:', filePath, error);
+        continue; // Skip this file if there's an error
       }
-    } catch (error) {
-      console.error('Error processing PDF:', filePath, error);
-      return null; // Skip this file if there's an error
+    } else {
+      console.log('File is an image. Proceeding to process:', filePath);
     }
-  } else {
-    console.log('File is an image. Proceeding to process:', filePath);
+
+    // Parse the receipt with Document AI using the file path
+    const expenseData = await parseReceiptWithDocumentAI(
+      processedFilePath,
+      serviceAccountAuth
+    );
+    if (Object.keys(expenseData).length > 0) {
+      expenses.push(expenseData);
+    }
   }
 
-  // Parse the receipt with Document AI
-  const expenseData = await parseReceiptWithDocumentAI(processedFilePath, serviceAccountAuth);
-  return expenseData;
+  if (expenses.length > 0) {
+    const excelPath = await createExpenseExcel(expenses, folderPath, filePrefix, startDate, endDate, fullName);
+    return { expenses, excelPath };
+  }
+
+  return { expenses, excelPath: null };
+}
+/**
+ * Download Gmail Attachments
+ * Adapted for dynamic user authentication
+ */
+function formatDateForGmail(date) {
+  return format(date, 'yyyy/MM/dd');
+}
+async function downloadGmailAttachments(auth, startDate, endDate) {
+  const gmail = google.gmail({ version: 'v1', auth });
+
+  // Create folder to save attachments
+  const folderName = `קבלות ${formatDate(startDate)} עד ${formatDate(endDate)}`;
+  const folderPath = path.join(INPUT_FOLDER, folderName);
+  fs.ensureDirSync(folderPath);
+  endDate.setHours(23, 59, 59, 999);
+  const queryEndDate = new Date(endDate.getTime() + 24 * 60 * 60 * 1000);
+  // Prepare date queries
+  const startDateQuery = formatDateForGmail(startDate);
+  const endDateQuery = formatDateForGmail(queryEndDate);
+
+  const query = `after:${startDateQuery} before:${endDateQuery}`;
+  console.log('Gmail query:', query);
+
+  const excludedSenders = [
+    'חברת חשמל לישראל',
+    'עיריית תל אביב-יפו',
+    'ארנונה - עיריית תל-אביב-יפו',
+  ];
+  const keywords = ['קבלה', 'חשבונית', 'חשבונית מס', 'הקבלה'];
+
+  let nextPageToken = null;
+  const allMessageIds = [];
+
+  // Fetch all message IDs matching the query
+  do {
+    const res = await gmail.users.messages.list({
+      userId: 'me',
+      q: query,
+      pageToken: nextPageToken,
+      maxResults: 500,
+    });
+    const messages = res.data.messages || [];
+    allMessageIds.push(...messages);
+    nextPageToken = res.data.nextPageToken;
+  } while (nextPageToken);
+
+  // Process each message
+  for (const messageData of allMessageIds) {
+    const msg = await gmail.users.messages.get({
+      userId: 'me',
+      id: messageData.id,
+      format: 'full',
+    });
+
+    const headers = msg.data.payload.headers;
+    const fromHeader = headers.find((h) => h.name === 'From');
+    const subjectHeader = headers.find((h) => h.name === 'Subject');
+    const dateHeader = headers.find((h) => h.name === 'Date');
+
+    const sender = fromHeader ? fromHeader.value : '';
+    const subject = subjectHeader ? subjectHeader.value : '';
+    const messageDateStr = dateHeader ? dateHeader.value : '';
+    const messageDate = new Date(messageDateStr);
+
+    // Check if message date is within range
+    if (messageDate < startDate || messageDate > endDate) {
+      continue;
+    }
+
+    // Exclusion logic
+    let excludeThread = false;
+    let keywordFound = false;
+
+    for (const excludedSender of excludedSenders) {
+      if (sender.includes(excludedSender)) {
+        excludeThread = true;
+        for (const keyword of keywords) {
+          if (subject.includes(keyword)) {
+            keywordFound = true;
+            break; // No need to check further if keyword is found
+          }
+        }
+        break; // No need to check other senders
+      }
+    }
+
+    // Decide whether to skip the thread
+    if (excludeThread && !keywordFound) {
+      // Skip this thread
+      console.log('Skipping message from excluded sender:', sender);
+      continue;
+    }
+
+    let receiptFoundInThread = false; // Flag to indicate if a receipt PDF has been found in this thread
+
+    // First pass: check if there's a receipt PDF in the message
+    if (msg.data.payload.parts) {
+      for (const part of msg.data.payload.parts) {
+        if (part.filename && part.filename.length > 0) {
+          const normalizedFileName = part.filename.toLowerCase();
+          if (
+            normalizedFileName.startsWith('receipt') &&
+            part.mimeType === 'application/pdf'
+          ) {
+            receiptFoundInThread = true;
+            break; // Found a receipt in this message
+          }
+        }
+      }
+    }
+
+    // Second pass: process the attachments based on whether receipt was found
+    if (msg.data.payload.parts) {
+      for (const part of msg.data.payload.parts) {
+        if (part.filename && part.filename.length > 0) {
+          const attachmentId = part.body.attachmentId;
+          if (!attachmentId) continue;
+
+          const attachment = await gmail.users.messages.attachments.get({
+            userId: 'me',
+            messageId: messageData.id,
+            id: attachmentId,
+          });
+
+          const data = attachment.data.data;
+          const buffer = Buffer.from(data, 'base64');
+
+          const contentType = part.mimeType;
+          const fileName = part.filename;
+          const isPDF = isPdfFile(contentType, fileName);
+
+          if (isPDF) {
+            const normalizedFileName = fileName.toLowerCase();
+            if (receiptFoundInThread) {
+              // If receipt is found in the thread, collect only PDFs starting with "receipt"
+              if (normalizedFileName.startsWith('receipt')) {
+                const filePath = path.join(folderPath, sanitize(fileName));
+                fs.writeFileSync(filePath, buffer);
+              }
+            } else {
+              // If no receipt is found, collect the PDF as usual
+              const filePath = path.join(folderPath, sanitize(fileName));
+              fs.writeFileSync(filePath, buffer);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return folderPath;
+}
+
+/**
+ * Check if a file is a PDF
+ */
+function isPdfFile(contentType, fileName) {
+  const normalizedContentType = contentType.toLowerCase();
+  const normalizedFileName = fileName.toLowerCase();
+
+  if (
+    normalizedContentType === 'application/pdf' ||
+    normalizedContentType === 'application/x-pdf' ||
+    normalizedContentType === 'application/acrobat' ||
+    normalizedContentType === 'applications/vnd.pdf' ||
+    normalizedContentType === 'text/pdf' ||
+    normalizedContentType === 'text/x-pdf' ||
+    normalizedContentType.includes('pdf')
+  ) {
+    return true;
+  } else if (normalizedFileName.endsWith('.pdf')) {
+    return true;
+  } else {
+    return false;
+  }
 }
 
 // Ensure input folder exists
@@ -672,10 +888,6 @@ const upload = multer({
   limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit per file
 }).array('files', 100); // Max 100 files
 
-// Progress Emitters
-const uploadProgressEmitters = {};
-const gmailProgressEmitters = {};
-
 // Routes
 
 // Home Route - Serve the upload form
@@ -683,131 +895,48 @@ app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Handle File Upload and Processing with Progress Logging
-app.post('/upload', upload, async (req, res) => {
-  const uploadId = Date.now().toString();
-  const progressEmitter = new events.EventEmitter();
-  uploadProgressEmitters[uploadId] = progressEmitter;
+// Handle File Upload and Processing
+app.post('/upload', (req, res) => {
+  upload(req, res, async function (err) {
+    if (err) {
+      console.error('Upload Error:', err.message);
+      return res.status(500).send(`Upload Error: ${err.message}`);
+    }
 
-  // Send the uploadId to the client
-  res.json({ uploadId });
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).send('No supported files were uploaded. Please upload PDF or image files.');
+    }
 
-  if (!req.files || req.files.length === 0) {
-    progressEmitter.emit('progress', [{ status: 'No files uploaded', progress: 0 }]);
-    delete uploadProgressEmitters[uploadId];
-    return;
-  }
+    console.log(`Received ${req.files.length} file(s). Starting processing...`);
 
-  console.log(`Received ${req.files.length} file(s). Starting processing...`);
+    try {
+      const files = req.files.map((file) => file.path);
+      const filePrefix = req.body.filePrefix || 'סיכום הוצאות';
+      const startDate = req.body.startDate || formatDate(new Date());
+      const endDate = req.body.endDate || formatDate(new Date());
+      const fullName = req.body.fullName || 'User';
 
-  try {
-    const files = req.files.map((file) => file.path);
-    const totalFiles = files.length;
-    const filePrefix = req.body.filePrefix || 'סיכום הוצאות';
+      const { expenses, excelPath } = await processFiles(files, INPUT_FOLDER, filePrefix, startDate, endDate, fullName);
 
-    const progressData = files.map((filePath) => ({
-      fileName: path.basename(filePath),
-      status: 'Pending',
-      progress: 0,
-    }));
-
-    // Function to emit progress updates
-    const emitProgress = () => {
-      progressEmitter.emit('progress', progressData);
-    };
-
-    emitProgress(); // Initial emit
-
-    const expenses = [];
-    const serviceAccountAuth = authenticateServiceAccount();
-    await serviceAccountAuth.authorize();
-
-    for (let i = 0; i < files.length; i++) {
-      const filePath = files[i];
-      const fileName = path.basename(filePath);
-
-      // Update status to 'Processing'
-      progressData[i].status = 'Processing';
-      progressData[i].progress = 25;
-      emitProgress();
-
-      // Process the file
-      const expenseData = await processFile(filePath, serviceAccountAuth);
-
-      if (expenseData) {
-        expenses.push(expenseData);
-        progressData[i].status = 'Completed';
-        progressData[i].progress = 100;
+      if (expenses.length > 0 && excelPath) {
+        console.log('Expense summary Excel file created at:', excelPath);
+        const excelFileName = encodeURIComponent(path.basename(excelPath));
+        const csvUrl = `/download/${excelFileName}`;
+        res.render('result', {
+          success: true,
+          csvUrl: csvUrl,
+          message: 'Files Uploaded and Processed Successfully!',
+        });
       } else {
-        progressData[i].status = 'Failed';
-        progressData[i].progress = 100;
+        res.render('result', {
+          success: false,
+          message: 'No expenses were extracted from the uploaded files.',
+        });
       }
-
-      emitProgress();
+    } catch (processingError) {
+      console.error('Processing Error:', processingError.message);
+      res.status(500).send(`Processing Error: ${processingError.message}`);
     }
-
-    // Create Expense Excel File
-    if (expenses.length > 0) {
-      const startDate = formatDate(new Date());
-      const endDate = formatDate(new Date());
-      const fullName = 'User';
-
-      const excelPath = await createExpenseExcel(
-        expenses,
-        INPUT_FOLDER,
-        filePrefix,
-        startDate,
-        endDate,
-        fullName
-      );
-      console.log('Expense summary Excel file created.');
-
-      // Provide a download link to the Excel file
-      const excelFileName = encodeURIComponent(path.basename(excelPath));
-      const csvUrl = `/download/${excelFileName}`;
-      progressEmitter.emit('progress', [
-        ...progressData,
-        { status: 'Processing complete. Download the file below.', progress: 100, downloadLink: csvUrl },
-      ]);
-    } else {
-      progressEmitter.emit('progress', [
-        ...progressData,
-        { status: 'No expenses extracted.', progress: 100 },
-      ]);
-    }
-  } catch (processingError) {
-    console.error('Processing Error:', processingError.message);
-    progressEmitter.emit('progress', [
-      ...progressData,
-      { status: `Processing Error: ${processingError.message}`, progress: 100 },
-    ]);
-  } finally {
-    delete uploadProgressEmitters[uploadId];
-  }
-});
-
-// Endpoint for Upload Progress
-app.get('/upload-progress/:uploadId', (req, res) => {
-  const uploadId = req.params.uploadId;
-  const progressEmitter = uploadProgressEmitters[uploadId];
-
-  if (!progressEmitter) {
-    res.status(404).end();
-    return;
-  }
-
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.flushHeaders();
-
-  const onProgress = (data) => {
-    res.write(`data: ${JSON.stringify(data)}\n\n`);
-  };
-
-  progressEmitter.on('progress', onProgress);
-
-  req.on('close', () => {
-    progressEmitter.removeListener('progress', onProgress);
   });
 });
 
@@ -815,7 +944,7 @@ app.get('/upload-progress/:uploadId', (req, res) => {
 app.get('/download/:filename', (req, res) => {
   const { filename } = req.params;
   const decodedFilename = decodeURIComponent(filename);
-
+  
   // Search for the file in INPUT_FOLDER and its subfolders
   const findFile = (dir) => {
     const files = fs.readdirSync(dir);
@@ -835,10 +964,7 @@ app.get('/download/:filename', (req, res) => {
   const filePath = findFile(INPUT_FOLDER);
 
   if (filePath && fs.existsSync(filePath)) {
-    res.setHeader(
-      'Content-Type',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    );
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.download(filePath, decodedFilename, (err) => {
       if (err) {
         console.error('Download Error:', err.message);
@@ -938,34 +1064,11 @@ app.get('/oauth2callback', async (req, res) => {
 
 // Route to display date input form
 app.get('/process-gmail', authenticateGmail, (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  res.render('process-gmail', { email: req.session.email });
 });
 
-// Handle Gmail Processing with Progress Logging
-const additionalUpload = multer({
-  storage: storage,
-  fileFilter: function (req, file, cb) {
-    // Accept PDF and common image files
-    const ext = path.extname(file.originalname).toLowerCase();
-    const allowedExtensions = ['.pdf', '.jpg', '.jpeg', '.png', '.tiff', '.tif'];
-    if (allowedExtensions.includes(ext)) {
-      cb(null, true);
-    } else {
-      console.warn(`Skipped unsupported file type: ${file.originalname}`);
-      cb(null, false); // Skip the file without throwing an error
-    }
-  },
-  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit per file
-}).array('additionalFiles', 100);
-
-app.post('/process-gmail', authenticateGmail, additionalUpload, async (req, res) => {
-  const sessionId = Date.now().toString();
-  const progressEmitter = new events.EventEmitter();
-  gmailProgressEmitters[sessionId] = progressEmitter;
-
-  // Send the sessionId to the client
-  res.json({ sessionId });
-
+// Process Gmail attachments
+app.post('/process-gmail', authenticateGmail, async (req, res) => {
   try {
     const auth = req.oAuth2Client;
     const { startDate, endDate, fullName, filePrefix } = req.body;
@@ -977,100 +1080,43 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, async (req, res)
     const endDateObj = new Date(endDate);
     endDateObj.setHours(23, 59, 59, 999); // Set to end of day
 
-    progressEmitter.emit('progress', [{ status: 'Downloading Gmail attachments...', progress: 10 }]);
-
     const attachmentsFolder = await downloadGmailAttachments(auth, startDateObj, endDateObj);
     console.log('Attachments downloaded to:', attachmentsFolder);
 
-    let files = fs.readdirSync(attachmentsFolder).map((file) =>
+    const files = fs.readdirSync(attachmentsFolder).map((file) =>
       path.join(attachmentsFolder, file)
     );
     console.log('Files found:', files);
 
-    // Include additional files
-    if (req.files && req.files.length > 0) {
-      for (const file of req.files) {
-        files.push(file.path);
-      }
-    }
-
     if (files.length === 0) {
-      progressEmitter.emit('progress', [{ status: 'No attachments found.', progress: 100 }]);
-      return;
+      return res.render('result', {
+        success: false,
+        message: 'No attachments were downloaded from Gmail within the specified date range.',
+      });
     }
 
-    progressEmitter.emit('progress', [{ status: 'Processing files...', progress: 30 }]);
-
-    const expenses = [];
-    const serviceAccountAuth = authenticateServiceAccount();
-    await serviceAccountAuth.authorize();
-
-    for (let i = 0; i < files.length; i++) {
-      const filePath = files[i];
-      const fileName = path.basename(filePath);
-
-      // Update progress
-      const progressPercent = 30 + ((i + 1) / files.length) * 50; // Between 30% and 80%
-      progressEmitter.emit('progress', [{ status: `Processing ${fileName}...`, progress: progressPercent }]);
-
-      // Process the file
-      const expenseData = await processFile(filePath, serviceAccountAuth);
-
-      if (expenseData) {
-        expenses.push(expenseData);
-      }
-    }
-
-    progressEmitter.emit('progress', [{ status: 'Creating Excel file...', progress: 80 }]);
-
-    const excelPath = await createExpenseExcel(
-      expenses,
-      attachmentsFolder,
-      customPrefix,
-      startDate,
-      endDate,
-      fullName
-    );
+    const { expenses, excelPath } = await processFiles(files, attachmentsFolder, customPrefix, startDate, endDate, fullName);
     console.log('Expenses extracted:', expenses.length);
     console.log('Excel file created at:', excelPath);
 
-    // Provide download link
-    const excelFileName = encodeURIComponent(path.basename(excelPath));
-    const csvUrl = `/download/${excelFileName}`;
-
-    progressEmitter.emit('progress', [{ status: 'Processing complete. Download the file below.', progress: 100, downloadLink: csvUrl }]);
-
+    if (expenses.length > 0 && excelPath) {
+      const excelFileName = encodeURIComponent(path.basename(excelPath));
+      const csvUrl = `/download/${excelFileName}`;
+      res.render('result', {
+        success: true,
+        csvUrl: csvUrl,
+        message: 'Gmail attachments processed successfully!',
+      });
+    } else {
+      res.render('result', {
+        success: false,
+        message: 'No expenses were extracted from the Gmail attachments.',
+      });
+    }
   } catch (error) {
     console.error('Error processing Gmail attachments:', error);
-    progressEmitter.emit('progress', [{ status: `Error: ${error.message}`, progress: 100 }]);
-  } finally {
-    delete gmailProgressEmitters[sessionId];
+    res.status(500).send(`Error: ${error.message}`);
   }
-});
-
-// Endpoint for Gmail Progress
-app.get('/gmail-progress/:sessionId', (req, res) => {
-  const sessionId = req.params.sessionId;
-  const progressEmitter = gmailProgressEmitters[sessionId];
-
-  if (!progressEmitter) {
-    res.status(404).end();
-    return;
-  }
-
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.flushHeaders();
-
-  const onProgress = (data) => {
-    res.write(`data: ${JSON.stringify(data)}\n\n`);
-  };
-
-  progressEmitter.on('progress', onProgress);
-
-  req.on('close', () => {
-    progressEmitter.removeListener('progress', onProgress);
-  });
 });
 
 // User Logout Route
@@ -1080,7 +1126,7 @@ app.get('/logout', (req, res) => {
 });
 
 // Start the Server
-const PORT = process.env.PORT || 8080;
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+  console.log(`Server is running on http://localhost:${PORT}`);
 });
