@@ -16,7 +16,6 @@ const { parse, format } = require('date-fns');
 const session = require('express-session');
 const events = require('events'); // For progress events
 const crypto = require('crypto'); // For file hashing
-const archiver = require('archiver'); // For creating ZIP files
 
 const app = express();
 
@@ -630,14 +629,14 @@ async function processFile(filePath, serviceAccountAuth, password) {
           processedFilePath = filePath; // Continue processing the unlocked file
         } else {
           console.log('Failed to unlock PDF:', filePath);
-          return { expenseData: null, filePath: null }; // Skip processing if PDF is locked and couldn't be unlocked
+          return null; // Skip processing if PDF is locked and couldn't be unlocked
         }
       } else {
         console.log('PDF is not encrypted. Proceeding without unlocking:', filePath);
       }
     } catch (error) {
       console.error('Error processing PDF:', filePath, error);
-      return { expenseData: null, filePath: null }; // Skip this file if there's an error
+      return null; // Skip this file if there's an error
     }
   } else {
     console.log('File is an image. Proceeding to process:', filePath);
@@ -645,16 +644,35 @@ async function processFile(filePath, serviceAccountAuth, password) {
 
   // Parse the receipt with Document AI
   const expenseData = await parseReceiptWithDocumentAI(processedFilePath, serviceAccountAuth);
-  return { expenseData, filePath: processedFilePath };
+  return expenseData;
 }
 
 /**
  * Calculate File Hash
-
+ */
+function calculateFileHash(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const stream = fs.createReadStream(filePath);
+    stream.on('data', (data) => {
+      hash.update(data);
+    });
+    stream.on('end', () => {
+      resolve(hash.digest('hex'));
+    });
+    stream.on('error', (err) => {
+      reject(err);
+    });
+  });
+}
 
 /**
  * Calculate Buffer Hash
  */
+function calculateBufferHash(buffer) {
+  return crypto.createHash('sha256').update(buffer).digest('hex');
+}
+
 /**
  * Check if the file is a PDF based on content type and filename
  */
@@ -701,6 +719,7 @@ const uploadProgressEmitters = {};
 const gmailProgressEmitters = {};
 
 // Duplicate Files Set
+const processedFilesSet = new Set();
 
 // Routes
 
@@ -746,7 +765,6 @@ app.post('/upload', upload, async (req, res) => {
     emitProgress(); // Initial emit
 
     const expenses = [];
-    const processedFilePaths = []; // Collect processed file paths
     const serviceAccountAuth = authenticateServiceAccount();
     await serviceAccountAuth.authorize();
 
@@ -754,21 +772,28 @@ app.post('/upload', upload, async (req, res) => {
       const filePath = files[i];
       const fileName = path.basename(filePath);
 
+      // Check for duplicate files
+      const fileHash = await calculateFileHash(filePath);
+      if (processedFilesSet.has(fileHash)) {
+        console.log(`Skipping duplicate file: ${fileName}`);
+        progressData[i].status = 'Skipped (Duplicate)';
+        progressData[i].progress = 100;
+        emitProgress();
+        continue;
+      } else {
+        processedFilesSet.add(fileHash);
+      }
+
       // Update status to 'Processing'
       progressData[i].status = 'Processing';
       progressData[i].progress = 25;
       emitProgress();
 
       // Process the file
-      const { expenseData, filePath: processedFilePath } = await processFile(
-        filePath,
-        serviceAccountAuth,
-        idNumber
-      );
+      const expenseData = await processFile(filePath, serviceAccountAuth, idNumber);
 
-      if (expenseData && processedFilePath) {
+      if (expenseData) {
         expenses.push(expenseData);
-        processedFilePaths.push(processedFilePath);
         progressData[i].status = 'Completed';
         progressData[i].progress = 100;
       } else {
@@ -779,86 +804,44 @@ app.post('/upload', upload, async (req, res) => {
       emitProgress();
     }
 
-    // ... rest of the code
+    // Create Expense Excel File
+    if (expenses.length > 0) {
+      const startDate = formatDate(new Date());
+      const endDate = formatDate(new Date());
+
+      const excelPath = await createExpenseExcel(
+        expenses,
+        INPUT_FOLDER,
+        name,
+        startDate,
+        endDate
+      );
+      console.log('Expense summary Excel file created.');
+
+      // Provide a download link to the Excel file
+      const excelFileName = encodeURIComponent(path.basename(excelPath));
+      const csvUrl = `/download/${excelFileName}`;
+      progressEmitter.emit('progress', [
+        ...progressData,
+        { status: 'Processing complete. Download the file below.', progress: 100, downloadLink: csvUrl },
+      ]);
+    } else {
+      progressEmitter.emit('progress', [
+        ...progressData,
+        { status: 'No expenses extracted.', progress: 100 },
+      ]);
+    }
   } catch (processingError) {
-    // ... error handling code
+    console.error('Processing Error:', processingError.message);
+    progressEmitter.emit('progress', [
+      ...progressData,
+      { status: `Processing Error: ${processingError.message}`, progress: 100 },
+    ]);
   } finally {
     delete uploadProgressEmitters[uploadId];
   }
 });
 
-
-// Function to create a ZIP file containing processed files and the Excel sheet
-async function createZipFile(filePaths, excelPath, folderPath) {
-  const baseFileName = 'processed_files';
-  const zipFilePath = generateUniqueFilename(baseFileName, 'zip', folderPath);
-
-  return new Promise((resolve, reject) => {
-    const output = fs.createWriteStream(zipFilePath);
-    const archive = archiver('zip', { zlib: { level: 9 } });
-
-    output.on('close', () => {
-      console.log(`ZIP file created at: ${zipFilePath}`);
-      resolve(zipFilePath);
-    });
-
-    archive.on('error', (err) => {
-      console.error('Error creating ZIP file:', err.message);
-      reject(err);
-    });
-
-    archive.pipe(output);
-
-    // Add processed files to the ZIP
-    for (const filePath of filePaths) {
-      const fileName = path.basename(filePath);
-      archive.file(filePath, { name: `processed_files/${fileName}` });
-    }
-
-    // Add the Excel file to the ZIP
-    const excelFileName = path.basename(excelPath);
-    archive.file(excelPath, { name: excelFileName });
-
-    archive.finalize();
-  });
-}
-
-/**
- * Generate a unique filename to prevent collisions
- */
-function generateUniqueFilename(baseName, extension, folderPath) {
-  let fileNumber = 1;
-  let fileName = `${baseName}.${extension}`;
-  let fullPath = path.join(folderPath, fileName);
-
-  while (fs.existsSync(fullPath)) {
-    fileName = `${baseName} (${fileNumber}).${extension}`;
-    fullPath = path.join(folderPath, fileName);
-    fileNumber++;
-  }
-
-  return fullPath;
-}
-
-// Download ZIP Route - Serve the generated ZIP file
-app.get('/download-zip/:filename', (req, res) => {
-  const { filename } = req.params;
-  const decodedFilename = decodeURIComponent(filename);
-
-  const filePath = path.join(INPUT_FOLDER, decodedFilename);
-
-  if (fs.existsSync(filePath)) {
-    res.setHeader('Content-Type', 'application/zip');
-    res.download(filePath, decodedFilename, (err) => {
-      if (err) {
-        console.error('Download Error:', err.message);
-        res.status(500).send('Error downloading the file.');
-      }
-    });
-  } else {
-    res.status(404).send('File not found.');
-  }
-});
 // Endpoint for Upload Progress
 app.get('/upload-progress/:uploadId', (req, res) => {
   const uploadId = req.params.uploadId;
@@ -912,26 +895,6 @@ app.get('/download/:filename', (req, res) => {
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     );
-    res.download(filePath, decodedFilename, (err) => {
-      if (err) {
-        console.error('Download Error:', err.message);
-        res.status(500).send('Error downloading the file.');
-      }
-    });
-  } else {
-    res.status(404).send('File not found.');
-  }
-});
-
-// Download ZIP Route - Serve the generated ZIP file
-app.get('/download-zip/:filename', (req, res) => {
-  const { filename } = req.params;
-  const decodedFilename = decodeURIComponent(filename);
-
-  const filePath = path.join(INPUT_FOLDER, decodedFilename);
-
-  if (fs.existsSync(filePath)) {
-    res.setHeader('Content-Type', 'application/zip');
     res.download(filePath, decodedFilename, (err) => {
       if (err) {
         console.error('Download Error:', err.message);
@@ -1116,7 +1079,6 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, async (req, res)
     progressEmitter.emit('progress', [{ status: 'Processing files...', progress: 30 }]);
 
     const expenses = [];
-    const processedFilePaths = []; // Collect processed file paths
     const serviceAccountAuth = authenticateServiceAccount();
     await serviceAccountAuth.authorize();
 
@@ -1124,20 +1086,25 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, async (req, res)
       const filePath = files[i];
       const fileName = path.basename(filePath);
 
+      // Check for duplicate files
+      const fileHash = await calculateFileHash(filePath);
+      if (processedFilesSet.has(fileHash)) {
+        console.log(`Skipping duplicate file: ${fileName}`);
+        progressEmitter.emit('progress', [{ status: `Skipping duplicate file: ${fileName}`, progress: 100 }]);
+        continue;
+      } else {
+        processedFilesSet.add(fileHash);
+      }
+
       // Update progress
       const progressPercent = 30 + ((i + 1) / files.length) * 50; // Between 30% and 80%
       progressEmitter.emit('progress', [{ status: `Processing ${fileName}...`, progress: progressPercent }]);
 
       // Process the file
-      const { expenseData, filePath: processedFilePath } = await processFile(
-        filePath,
-        serviceAccountAuth,
-        idNumber
-      );
+      const expenseData = await processFile(filePath, serviceAccountAuth, idNumber);
 
-      if (expenseData && processedFilePath) {
+      if (expenseData) {
         expenses.push(expenseData);
-        processedFilePaths.push(processedFilePath);
       }
     }
 
@@ -1153,26 +1120,11 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, async (req, res)
     console.log('Expenses extracted:', expenses.length);
     console.log('Excel file created at:', excelPath);
 
-    progressEmitter.emit('progress', [{ status: 'Creating ZIP file...', progress: 90 }]);
-
-    // Create ZIP file including processed files and Excel
-    const zipFileName = await createZipFile(
-      processedFilePaths,
-      excelPath,
-      attachmentsFolder
-    );
-
     // Provide download link
-    const zipFileEncodedName = encodeURIComponent(path.basename(zipFileName));
-    const zipUrl = `/download-zip/${zipFileEncodedName}`;
+    const excelFileName = encodeURIComponent(path.basename(excelPath));
+    const csvUrl = `/download/${excelFileName}`;
 
-    progressEmitter.emit('progress', [
-      {
-        status: 'Processing complete. Download the files below.',
-        progress: 100,
-        downloadLink: zipUrl,
-      },
-    ]);
+    progressEmitter.emit('progress', [{ status: 'Processing complete. Download the file below.', progress: 100, downloadLink: csvUrl }]);
 
   } catch (error) {
     console.error('Error processing Gmail attachments:', error);
@@ -1336,12 +1288,30 @@ async function downloadGmailAttachments(auth, startDate, endDate) {
             if (receiptFoundInThread) {
               // If receipt is found in the thread, collect only PDFs starting with "receipt"
               if (normalizedFileName.startsWith('receipt')) {
+                // Check for duplicate files
+                const fileHash = calculateBufferHash(buffer);
+                if (processedFilesSet.has(fileHash)) {
+                  console.log(`Skipping duplicate attachment: ${fileName}`);
+                  continue;
+                } else {
+                  processedFilesSet.add(fileHash);
+                }
+
                 const filePath = path.join(folderPath, sanitize(fileName));
                 fs.writeFileSync(filePath, buffer);
                 console.log(`Saved attachment: ${filePath}`);
               }
             } else {
               // If no receipt is found, collect the PDF as usual
+              // Check for duplicate files
+              const fileHash = calculateBufferHash(buffer);
+              if (processedFilesSet.has(fileHash)) {
+                console.log(`Skipping duplicate attachment: ${fileName}`);
+                continue;
+              } else {
+                processedFilesSet.add(fileHash);
+              }
+
               const filePath = path.join(folderPath, sanitize(fileName));
               fs.writeFileSync(filePath, buffer);
               console.log(`Saved attachment: ${filePath}`);
@@ -1354,7 +1324,6 @@ async function downloadGmailAttachments(auth, startDate, endDate) {
 
   return folderPath;
 }
-
 
 // User Logout Route
 app.get('/logout', (req, res) => {

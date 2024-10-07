@@ -11,22 +11,6 @@
   />
   <!-- Custom Styles -->
   <link rel="stylesheet" href="/custom.css" />
-  <style>
-    body {
-      padding: 20px;
-    }
-    .progress-item {
-      margin-bottom: 20px;
-    }
-    .download-links a {
-      margin-right: 10px;
-    }
-    .footer {
-      text-align: center;
-      margin-top: 50px;
-      color: #6c757d;
-    }
-  </style>
 </head>
 <body>
   <!-- Navigation Bar -->
@@ -95,7 +79,7 @@
       </button>
     </form>
     <!-- Gmail Progress Log -->
-    <div id="gmail-progress-log" class="mt-4"></div>
+    <div id="gmail-progress-log"></div>
   </div>
 
   <!-- Footer -->
@@ -168,22 +152,7 @@
                 aria-valuemax="100"
               >${item.progress}%</div>
             </div>
-            ${
-              item.downloadLinkExcel || item.downloadLinkZip
-                ? `<div class="download-links mt-3">
-                    ${
-                      item.downloadLinkExcel
-                        ? `<a href="${item.downloadLinkExcel}" class="btn btn-success">הורד קובץ אקסל</a>`
-                        : ''
-                    }
-                    ${
-                      item.downloadLinkZip
-                        ? `<a href="${item.downloadLinkZip}" class="btn btn-success">הורד קובץ ZIP</a>`
-                        : ''
-                    }
-                  </div>`
-                : ''
-            }
+            ${item.downloadLink ? `<a href="${item.downloadLink}" class="btn btn-success mt-3">הורד קובץ אקסל</a>` : ''}
           </div>
         `;
       });
