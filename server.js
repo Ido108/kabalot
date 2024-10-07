@@ -607,64 +607,6 @@ async function createExpenseExcel(expenses, folderPath, name, startDate, endDate
 }
 
 /**
- * Create a ZIP file containing processed files and the Excel sheet
- * @param {Array} filePaths - Array of file paths to include in the ZIP
- * @param {string} excelPath - Path to the Excel file
- * @param {string} folderPath - Path to the folder where ZIP will be saved
- * @returns {string} - Path to the created ZIP file
- */
-async function createZipFile(filePaths, excelPath, folderPath) {
-  const baseFileName = path.basename(excelPath, path.extname(excelPath));
-  const zipFilePath = generateUniqueFilename(baseFileName, 'zip', folderPath);
-
-  return new Promise((resolve, reject) => {
-    const output = fs.createWriteStream(zipFilePath);
-    const archive = archiver('zip', { zlib: { level: 9 } });
-
-    output.on('close', () => {
-      console.log(`ZIP file created at: ${zipFilePath}`);
-      resolve(zipFilePath);
-    });
-
-    archive.on('error', (err) => {
-      console.error('Error creating ZIP file:', err.message);
-      reject(err);
-    });
-
-    archive.pipe(output);
-
-    // Add processed files to the ZIP
-    for (const filePath of filePaths) {
-      const fileName = path.basename(filePath);
-      archive.file(filePath, { name: `processed_files/${fileName}` });
-    }
-
-    // Add the Excel file to the ZIP
-    const excelFileName = path.basename(excelPath);
-    archive.file(excelPath, { name: excelFileName });
-
-    archive.finalize();
-  });
-}
-
-/**
- * Generate a unique filename to prevent collisions
- */
-function generateUniqueFilename(baseName, extension, folderPath) {
-  let fileNumber = 1;
-  let fileName = `${baseName}.${extension}`;
-  let fullPath = path.join(folderPath, fileName);
-
-  while (fs.existsSync(fullPath)) {
-    fileName = `${baseName} (${fileNumber}).${extension}`;
-    fullPath = path.join(folderPath, fileName);
-    fileNumber++;
-  }
-
-  return fullPath;
-}
-
-/**
  * Process a single file
  */
 async function processFile(filePath, serviceAccountAuth, password) {
@@ -706,6 +648,23 @@ async function processFile(filePath, serviceAccountAuth, password) {
   return { expenseData, filePath: processedFilePath };
 }
 
+/**
+ * Calculate File Hash
+
+
+/**
+ * Calculate Buffer Hash
+ */
+/**
+ * Check if the file is a PDF based on content type and filename
+ */
+function isPdfFile(contentType, filename) {
+  const ext = path.extname(filename).toLowerCase();
+  return (
+    contentType === 'application/pdf' || ext === '.pdf'
+  );
+}
+
 // Ensure input folder exists
 fs.ensureDirSync(INPUT_FOLDER);
 
@@ -740,6 +699,8 @@ const upload = multer({
 // Progress Emitters
 const uploadProgressEmitters = {};
 const gmailProgressEmitters = {};
+
+// Duplicate Files Set
 
 // Routes
 
@@ -818,63 +779,18 @@ app.post('/upload', upload, async (req, res) => {
       emitProgress();
     }
 
-    // Create Expense Excel File
-    if (expenses.length > 0) {
-      const startDate = formatDate(new Date());
-      const endDate = formatDate(new Date());
-
-      const excelPath = await createExpenseExcel(
-        expenses,
-        INPUT_FOLDER,
-        name,
-        startDate,
-        endDate
-      );
-      console.log('Expense summary Excel file created.');
-
-      // Create ZIP file including processed files and Excel
-      const zipFileName = await createZipFile(
-        processedFilePaths,
-        excelPath,
-        INPUT_FOLDER
-      );
-
-      // Provide download links for both Excel and ZIP
-      const excelFileEncodedName = encodeURIComponent(path.basename(excelPath));
-      const zipFileEncodedName = encodeURIComponent(path.basename(zipFileName));
-      const excelUrl = `/download/${excelFileEncodedName}`;
-      const zipUrl = `/download-zip/${zipFileEncodedName}`;
-
-      progressEmitter.emit('progress', [
-        ...progressData,
-        {
-          status: 'Processing complete. Download the files below.',
-          progress: 100,
-          downloadLinks: {
-            excel: excelUrl,
-            zip: zipUrl,
-          },
-        },
-      ]);
-    } else {
-      progressEmitter.emit('progress', [
-        ...progressData,
-        { status: 'No expenses extracted.', progress: 100 },
-      ]);
-    }
+    // ... rest of the code
   } catch (processingError) {
-    console.error('Processing Error:', processingError.message);
-    progressEmitter.emit('progress', [
-      { status: `Processing Error: ${processingError.message}`, progress: 100 },
-    ]);
+    // ... error handling code
   } finally {
     delete uploadProgressEmitters[uploadId];
   }
 });
 
+
 // Function to create a ZIP file containing processed files and the Excel sheet
 async function createZipFile(filePaths, excelPath, folderPath) {
-  const baseFileName = path.basename(excelPath, path.extname(excelPath));
+  const baseFileName = 'processed_files';
   const zipFilePath = generateUniqueFilename(baseFileName, 'zip', folderPath);
 
   return new Promise((resolve, reject) => {
@@ -924,6 +840,25 @@ function generateUniqueFilename(baseName, extension, folderPath) {
   return fullPath;
 }
 
+// Download ZIP Route - Serve the generated ZIP file
+app.get('/download-zip/:filename', (req, res) => {
+  const { filename } = req.params;
+  const decodedFilename = decodeURIComponent(filename);
+
+  const filePath = path.join(INPUT_FOLDER, decodedFilename);
+
+  if (fs.existsSync(filePath)) {
+    res.setHeader('Content-Type', 'application/zip');
+    res.download(filePath, decodedFilename, (err) => {
+      if (err) {
+        console.error('Download Error:', err.message);
+        res.status(500).send('Error downloading the file.');
+      }
+    });
+  } else {
+    res.status(404).send('File not found.');
+  }
+});
 // Endpoint for Upload Progress
 app.get('/upload-progress/:uploadId', (req, res) => {
   const uploadId = req.params.uploadId;
@@ -993,25 +928,9 @@ app.get('/download-zip/:filename', (req, res) => {
   const { filename } = req.params;
   const decodedFilename = decodeURIComponent(filename);
 
-  // Search for the ZIP file in INPUT_FOLDER and its subfolders
-  const findFile = (dir) => {
-    const files = fs.readdirSync(dir);
-    for (const file of files) {
-      const filePath = path.join(dir, file);
-      const stat = fs.statSync(filePath);
-      if (stat.isDirectory()) {
-        const found = findFile(filePath);
-        if (found) return found;
-      } else if (file === decodedFilename) {
-        return filePath;
-      }
-    }
-    return null;
-  };
+  const filePath = path.join(INPUT_FOLDER, decodedFilename);
 
-  const filePath = findFile(INPUT_FOLDER);
-
-  if (filePath && fs.existsSync(filePath)) {
+  if (fs.existsSync(filePath)) {
     res.setHeader('Content-Type', 'application/zip');
     res.download(filePath, decodedFilename, (err) => {
       if (err) {
@@ -1243,20 +1162,15 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, async (req, res)
       attachmentsFolder
     );
 
-    // Provide download links for both Excel and ZIP
-    const excelFileEncodedName = encodeURIComponent(path.basename(excelPath));
+    // Provide download link
     const zipFileEncodedName = encodeURIComponent(path.basename(zipFileName));
-    const excelUrl = `/download/${excelFileEncodedName}`;
     const zipUrl = `/download-zip/${zipFileEncodedName}`;
 
     progressEmitter.emit('progress', [
       {
         status: 'Processing complete. Download the files below.',
         progress: 100,
-        downloadLinks: {
-          excel: excelUrl,
-          zip: zipUrl,
-        },
+        downloadLink: zipUrl,
       },
     ]);
 
@@ -1293,9 +1207,7 @@ app.get('/gmail-progress/:sessionId', (req, res) => {
   });
 });
 
-/**
- * Function to download Gmail attachments with filtering and keywords
- */
+// Function to download Gmail attachments with filtering and keywords
 async function downloadGmailAttachments(auth, startDate, endDate) {
   const gmail = google.gmail({ version: 'v1', auth });
 
@@ -1443,8 +1355,15 @@ async function downloadGmailAttachments(auth, startDate, endDate) {
   return folderPath;
 }
 
+
 // User Logout Route
 app.get('/logout', (req, res) => {
   req.session.destroy();
   res.redirect('/');
+});
+
+// Start the Server
+const PORT = process.env.PORT || 8080;
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
 });
