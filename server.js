@@ -506,7 +506,7 @@ async function parseReceiptWithDocumentAI(filePath, serviceAccountAuth) {
  * @param {Array} expenses - Array of expense objects
  * @param {string} folderPath - Path to the folder where Excel file will be saved
  */
-async function createExpenseExcel(expenses, folderPath, filePrefix, startDate, endDate, fullName) {
+async function createExpenseExcel(expenses, folderPath, startDate, endDate, fullName) {
   // Ensure valid dates
   const validStartDate = parse(startDate, 'yyyy-MM-dd', new Date());
   const validEndDate = parse(endDate, 'yyyy-MM-dd', new Date());
@@ -516,7 +516,7 @@ async function createExpenseExcel(expenses, folderPath, filePrefix, startDate, e
   const endDateFormatted = format(validEndDate, 'dd-MM-yy');
   
   // Create base filename
-  let baseFileName = `${filePrefix}-${startDateFormatted}-to-${endDateFormatted}-${fullName.replace(/\s+/g, '_')}`;
+  let baseFileName = `${startDateFormatted}-to-${endDateFormatted}-${fullName.replace(/\s+/g, '_')}`;
   let fileName = `${baseFileName}.xlsx`;
   let fullPath = path.join(folderPath, fileName);
   
@@ -787,7 +787,6 @@ app.post('/upload', upload, async (req, res) => {
       const excelPath = await createExpenseExcel(
         expenses,
         INPUT_FOLDER,
-        filePrefix,
         startDate,
         endDate,
         fullName
@@ -1084,7 +1083,6 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, async (req, res)
     const excelPath = await createExpenseExcel(
       expenses,
       attachmentsFolder,
-      customPrefix,
       startDate,
       endDate,
       fullName
