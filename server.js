@@ -1132,63 +1132,43 @@ app.get('/gmail-progress/:sessionId', (req, res) => {
 });
 
 // Function to download Gmail attachments
-async function downloadGmailAttachments(auth, startDate, endDate) {
-  const gmail = google.gmail({ version: 'v1', auth });
-  const attachmentsFolder = path.join(INPUT_FOLDER, 'attachments');
-  fs.ensureDirSync(attachmentsFolder);
+async function processFile(filePath, serviceAccountAuth, password) {
+  const ext = path.extname(filePath).toLowerCase();
+  const isPDF = ext === '.pdf';
+  let processedFilePath = filePath;
 
-  const query = `after:${formatDate(startDate)} before:${formatDate(endDate)} has:attachment (filename:pdf OR filename:jpg OR filename:jpeg OR filename:png OR filename:tif OR filename:tiff)`;
-
-  let messages = [];
-  let nextPageToken = null;
-
-  do {
-    const res = await gmail.users.messages.list({
-      userId: 'me',
-      q: query,
-      maxResults: 100,
-      pageToken: nextPageToken,
-    });
-
-    if (res.data.messages) {
-      messages = messages.concat(res.data.messages);
-    }
-
-    nextPageToken = res.data.nextPageToken;
-  } while (nextPageToken);
-
-  console.log(`Found ${messages.length} messages with attachments.`);
-
-  for (const message of messages) {
-    const msg = await gmail.users.messages.get({
-      userId: 'me',
-      id: message.id,
-    });
-
-    const parts = msg.data.payload.parts;
-    if (!parts) continue;
-
-    for (const part of parts) {
-      if (part.filename && part.body && part.body.attachmentId) {
-        const attachment = await gmail.users.messages.attachments.get({
-          userId: 'me',
-          messageId: message.id,
-          id: part.body.attachmentId,
-        });
-
-        const data = attachment.data.data;
-        const fileData = Buffer.from(data, 'base64');
-
-        const sanitizedFilename = sanitize(part.filename) || 'unnamed_attachment';
-        const filePath = path.join(attachmentsFolder, sanitizedFilename);
-
-        fs.writeFileSync(filePath, fileData);
-        console.log(`Saved attachment: ${filePath}`);
+  if (isPDF) {
+    try {
+      // Check if the PDF is encrypted
+      const isEncrypted = await isPdfEncrypted(filePath);
+      if (isEncrypted) {
+        console.log('PDF is encrypted. Attempting to unlock:', filePath);
+        // Attempt to unlock PDF with provided password
+        const unlockedPath = await unlockPdf(filePath, password);
+        if (unlockedPath) {
+          // Overwrite the original file with the unlocked PDF
+          fs.copyFileSync(unlockedPath, filePath);
+          fs.unlinkSync(unlockedPath); // Remove the temporary unlocked file
+          console.log('PDF unlocked and overwritten:', filePath);
+          processedFilePath = filePath; // Continue processing the unlocked file
+        } else {
+          console.log('Failed to unlock PDF:', filePath);
+          return null; // Skip processing if PDF is locked and couldn't be unlocked
+        }
+      } else {
+        console.log('PDF is not encrypted. Proceeding without unlocking:', filePath);
       }
+    } catch (error) {
+      console.error('Error processing PDF:', filePath, error);
+      return null; // Skip this file if there's an error
     }
+  } else {
+    console.log('File is an image. Proceeding to process:', filePath);
   }
 
-  return attachmentsFolder;
+  // Parse the receipt with Document AI
+  const expenseData = await parseReceiptWithDocumentAI(processedFilePath, serviceAccountAuth);
+  return expenseData;
 }
 
 // User Logout Route
