@@ -77,13 +77,23 @@
               />
             </div>
             <div class="mb-3">
-              <label for="filePrefix" class="form-label">קידומת קובץ</label>
+              <label for="name" class="form-label">שם (אופציונלי)</label>
               <input
                 type="text"
-                id="filePrefix"
-                name="filePrefix"
+                id="name"
+                name="name"
                 class="form-control"
-                placeholder="הכנס קידומת עבור קובץ הפלט"
+                placeholder="הכנס את שמך (אופציונלי)"
+              />
+            </div>
+            <div class="mb-3">
+              <label for="idNumber" class="form-label">מספר ת"ז (לפתיחת קבצים מוגנים)</label>
+              <input
+                type="text"
+                id="idNumber"
+                name="idNumber"
+                class="form-control"
+                placeholder="הכנס את מספר תעודת הזהות שלך"
               />
             </div>
             <button type="button" id="upload-button" class="btn btn-primary">
@@ -142,7 +152,8 @@
     const uploadButton = document.getElementById('upload-button');
     const fileInput = document.getElementById('file-input');
     const progressLog = document.getElementById('progress-log');
-    const filePrefixInput = document.getElementById('filePrefix');
+    const nameInput = document.getElementById('name');
+    const idNumberInput = document.getElementById('idNumber');
 
     uploadButton.addEventListener('click', () => {
       const files = fileInput.files;
@@ -151,13 +162,15 @@
         return;
       }
 
-      const filePrefix = filePrefixInput.value;
-      uploadFiles(files, filePrefix);
+      const name = nameInput.value;
+      const idNumber = idNumberInput.value;
+      uploadFiles(files, name, idNumber);
     });
 
-    function uploadFiles(files, filePrefix) {
+    function uploadFiles(files, name, idNumber) {
       const formData = new FormData();
-      formData.append('filePrefix', filePrefix);
+      formData.append('name', name);
+      formData.append('idNumber', idNumber);
       for (const file of files) {
         formData.append('files', file);
       }

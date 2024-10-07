@@ -15,6 +15,7 @@ const Excel = require('exceljs');
 const { parse, format } = require('date-fns');
 const session = require('express-session');
 const events = require('events'); // For progress events
+const crypto = require('crypto'); // For file hashing
 
 const app = express();
 
@@ -62,15 +63,6 @@ if (!fs.existsSync(INPUT_FOLDER)) {
 console.log(`Input folder: ${INPUT_FOLDER}`);
 
 const PDFCO_API_KEY = process.env.PDFCO_API_KEY;
-const PASSWORD_PROTECTED_PDF_PASSWORD =
-  process.env.PASSWORD_PROTECTED_PDF_PASSWORD || 'your-default-password';
-
-// Google Document AI Configuration
-const DOCUMENT_AI_CONFIG = {
-  projectId: process.env.DOCUMENT_AI_PROJECT_ID || 'your-project-id', // Replace with your GCP project ID
-  location: process.env.DOCUMENT_AI_LOCATION || 'us', // Processor location
-  processorId: process.env.DOCUMENT_AI_PROCESSOR_ID || 'your-processor-id', // Your actual processor ID
-};
 
 // Use base64 encoded service account credentials from environment variable
 const SERVICE_ACCOUNT_BASE64 = process.env.SERVICE_ACCOUNT_BASE64;
@@ -135,10 +127,7 @@ async function getUsdToIlsExchangeRate(date) {
  * @param {string} password - Password to unlock the PDF
  * @returns {string|null} - Path to the unlocked PDF or null if failed
  */
-async function unlockPdf(
-  filePath,
-  password = PASSWORD_PROTECTED_PDF_PASSWORD
-) {
+async function unlockPdf(filePath, password) {
   if (!PDFCO_API_KEY) {
     throw new Error('PDFCO_API_KEY is not set in environment variables.');
   }
@@ -481,7 +470,7 @@ async function parseReceiptWithDocumentAI(filePath, serviceAccountAuth) {
  * @param {Array} expenses - Array of expense objects
  * @param {string} folderPath - Path to the folder where Excel file will be saved
  */
-async function createExpenseExcel(expenses, folderPath, filePrefix, startDate, endDate, fullName) {
+async function createExpenseExcel(expenses, folderPath, name, startDate, endDate) {
   // Ensure valid dates
   const validStartDate = parse(startDate, 'yyyy-MM-dd', new Date());
   const validEndDate = parse(endDate, 'yyyy-MM-dd', new Date());
@@ -491,7 +480,10 @@ async function createExpenseExcel(expenses, folderPath, filePrefix, startDate, e
   const endDateFormatted = format(validEndDate, 'dd-MM-yy');
   
   // Create base filename
-  let baseFileName = `${filePrefix}-${startDateFormatted}-to-${endDateFormatted}-${fullName.replace(/\s+/g, '_')}`;
+  let baseFileName = `${startDateFormatted}-to-${endDateFormatted}`;
+  if (name) {
+    baseFileName += `-${name.replace(/\s+/g, '_')}`;
+  }
   let fileName = `${baseFileName}.xlsx`;
   let fullPath = path.join(folderPath, fileName);
   
@@ -602,7 +594,7 @@ async function createExpenseExcel(expenses, folderPath, filePrefix, startDate, e
 /**
  * Process a single file
  */
-async function processFile(filePath, serviceAccountAuth) {
+async function processFile(filePath, serviceAccountAuth, password) {
   const ext = path.extname(filePath).toLowerCase();
   const isPDF = ext === '.pdf';
   let processedFilePath = filePath;
@@ -613,8 +605,8 @@ async function processFile(filePath, serviceAccountAuth) {
       const isEncrypted = await isPdfEncrypted(filePath);
       if (isEncrypted) {
         console.log('PDF is encrypted. Attempting to unlock:', filePath);
-        // Attempt to unlock PDF
-        const unlockedPath = await unlockPdf(filePath);
+        // Attempt to unlock PDF with provided password
+        const unlockedPath = await unlockPdf(filePath, password);
         if (unlockedPath) {
           // Overwrite the original file with the unlocked PDF
           fs.copyFileSync(unlockedPath, filePath);
@@ -639,6 +631,25 @@ async function processFile(filePath, serviceAccountAuth) {
   // Parse the receipt with Document AI
   const expenseData = await parseReceiptWithDocumentAI(processedFilePath, serviceAccountAuth);
   return expenseData;
+}
+
+/**
+ * Calculate File Hash
+ */
+function calculateFileHash(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const stream = fs.createReadStream(filePath);
+    stream.on('data', (data) => {
+      hash.update(data);
+    });
+    stream.on('end', () => {
+      resolve(hash.digest('hex'));
+    });
+    stream.on('error', (err) => {
+      reject(err);
+    });
+  });
 }
 
 // Ensure input folder exists
@@ -676,6 +687,9 @@ const upload = multer({
 const uploadProgressEmitters = {};
 const gmailProgressEmitters = {};
 
+// Duplicate Files Set
+const processedFilesSet = new Set();
+
 // Routes
 
 // Home Route - Serve the upload form
@@ -703,7 +717,8 @@ app.post('/upload', upload, async (req, res) => {
   try {
     const files = req.files.map((file) => file.path);
     const totalFiles = files.length;
-    const filePrefix = req.body.filePrefix || 'סיכום הוצאות';
+    const name = req.body.name || ''; // Optional name
+    const idNumber = req.body.idNumber || ''; // Optional ID number for PDF password
 
     const progressData = files.map((filePath) => ({
       fileName: path.basename(filePath),
@@ -726,13 +741,25 @@ app.post('/upload', upload, async (req, res) => {
       const filePath = files[i];
       const fileName = path.basename(filePath);
 
+      // Check for duplicate files
+      const fileHash = await calculateFileHash(filePath);
+      if (processedFilesSet.has(fileHash)) {
+        console.log(`Skipping duplicate file: ${fileName}`);
+        progressData[i].status = 'Skipped (Duplicate)';
+        progressData[i].progress = 100;
+        emitProgress();
+        continue;
+      } else {
+        processedFilesSet.add(fileHash);
+      }
+
       // Update status to 'Processing'
       progressData[i].status = 'Processing';
       progressData[i].progress = 25;
       emitProgress();
 
       // Process the file
-      const expenseData = await processFile(filePath, serviceAccountAuth);
+      const expenseData = await processFile(filePath, serviceAccountAuth, idNumber);
 
       if (expenseData) {
         expenses.push(expenseData);
@@ -750,15 +777,13 @@ app.post('/upload', upload, async (req, res) => {
     if (expenses.length > 0) {
       const startDate = formatDate(new Date());
       const endDate = formatDate(new Date());
-      const fullName = 'User';
 
       const excelPath = await createExpenseExcel(
         expenses,
         INPUT_FOLDER,
-        filePrefix,
+        name,
         startDate,
-        endDate,
-        fullName
+        endDate
       );
       console.log('Expense summary Excel file created.');
 
@@ -990,8 +1015,7 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, async (req, res)
 
   try {
     const auth = req.oAuth2Client;
-    const { startDate, endDate, fullName, filePrefix } = req.body;
-    const customPrefix = filePrefix || 'סיכום הוצאות'; // Use default if not provided
+    const { startDate, endDate, name, idNumber } = req.body;
 
     console.log('Processing Gmail attachments from', startDate, 'to', endDate);
 
@@ -1031,12 +1055,22 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, async (req, res)
       const filePath = files[i];
       const fileName = path.basename(filePath);
 
+      // Check for duplicate files
+      const fileHash = await calculateFileHash(filePath);
+      if (processedFilesSet.has(fileHash)) {
+        console.log(`Skipping duplicate file: ${fileName}`);
+        progressEmitter.emit('progress', [{ status: `Skipping duplicate file: ${fileName}`, progress: 100 }]);
+        continue;
+      } else {
+        processedFilesSet.add(fileHash);
+      }
+
       // Update progress
       const progressPercent = 30 + ((i + 1) / files.length) * 50; // Between 30% and 80%
       progressEmitter.emit('progress', [{ status: `Processing ${fileName}...`, progress: progressPercent }]);
 
       // Process the file
-      const expenseData = await processFile(filePath, serviceAccountAuth);
+      const expenseData = await processFile(filePath, serviceAccountAuth, idNumber);
 
       if (expenseData) {
         expenses.push(expenseData);
@@ -1048,10 +1082,9 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, async (req, res)
     const excelPath = await createExpenseExcel(
       expenses,
       attachmentsFolder,
-      customPrefix,
+      name,
       startDate,
-      endDate,
-      fullName
+      endDate
     );
     console.log('Expenses extracted:', expenses.length);
     console.log('Excel file created at:', excelPath);
@@ -1145,6 +1178,15 @@ async function downloadGmailAttachments(auth, startDate, endDate) {
 
         const sanitizedFilename = sanitize(part.filename) || 'unnamed_attachment';
         const filePath = path.join(attachmentsFolder, sanitizedFilename);
+
+        // Check for duplicate files
+        const fileHash = crypto.createHash('sha256').update(fileData).digest('hex');
+        if (processedFilesSet.has(fileHash)) {
+          console.log(`Skipping duplicate attachment: ${sanitizedFilename}`);
+          continue;
+        } else {
+          processedFilesSet.add(fileHash);
+        }
 
         fs.writeFileSync(filePath, fileData);
         console.log(`Saved attachment: ${filePath}`);
