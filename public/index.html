@@ -2,7 +2,7 @@
 <html lang="he">
 <head>
   <meta charset="UTF-8">
-  <title>עיבוד מסמכי הוצאות- סורק קבלות pdf ותמונות ומוריד עליך קובץ אקסא מפלצתי</title>
+  <title>עיבוד מסמכי הוצאות - סורק קבלות PDF ותמונות ומוריד עליך קובץ אקסל מפלצתי</title>
   <!-- Bootstrap 5 CSS -->
   <link
     rel="stylesheet"
@@ -11,12 +11,28 @@
   />
   <!-- Custom Styles -->
   <link rel="stylesheet" href="/custom.css" />
+  <style>
+    body {
+      padding: 20px;
+    }
+    .progress-item {
+      margin-bottom: 20px;
+    }
+    .download-links a {
+      margin-right: 10px;
+    }
+    .footer {
+      text-align: center;
+      margin-top: 50px;
+      color: #6c757d;
+    }
+  </style>
 </head>
 <body>
   <!-- Navigation Bar -->
   <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
     <div class="container-fluid">
-      <a class="navbar-brand" href="#">עיבוד מסמכי הוצאות- סורק לך את כל ההוצאות מסמכים תמונות ומוריד קובץ אקסאל מסודר ומפלצתי</a>
+      <a class="navbar-brand" href="#">עיבוד מסמכי הוצאות</a>
     </div>
   </nav>
 
@@ -74,6 +90,7 @@
                 name="files"
                 multiple
                 accept=".pdf,.jpg,.jpeg,.png,.tiff,.tif"
+                required
               />
             </div>
             <div class="mb-3">
@@ -101,7 +118,7 @@
             </button>
           </form>
           <!-- Progress Log -->
-          <div id="progress-log"></div>
+          <div id="progress-log" class="mt-4"></div>
         </div>
       </div>
 
@@ -216,7 +233,22 @@
                 aria-valuemax="100"
               >${item.progress}%</div>
             </div>
-            ${item.downloadLink ? `<a href="${item.downloadLink}" class="btn btn-success mt-3">הורד קובץ אקסל</a>` : ''}
+            ${
+              item.downloadLinkExcel || item.downloadLinkZip
+                ? `<div class="download-links mt-3">
+                    ${
+                      item.downloadLinkExcel
+                        ? `<a href="${item.downloadLinkExcel}" class="btn btn-success">הורד קובץ אקסל</a>`
+                        : ''
+                    }
+                    ${
+                      item.downloadLinkZip
+                        ? `<a href="${item.downloadLinkZip}" class="btn btn-success">הורד קובץ ZIP</a>`
+                        : ''
+                    }
+                  </div>`
+                : ''
+            }
           </div>
         `;
       });
