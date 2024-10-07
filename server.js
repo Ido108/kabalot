@@ -1095,6 +1095,9 @@ app.get('/gmail-progress/:sessionId', (req, res) => {
   });
 });
 
+function formatDateForGmail(date) {
+  return format(date, 'yyyy/MM/dd');
+}
 // Function to download Gmail attachments
 async function downloadGmailAttachments(auth, startDate, endDate) {
   const gmail = google.gmail({ version: 'v1', auth });
