@@ -67,6 +67,13 @@ const PDFCO_API_KEY = process.env.PDFCO_API_KEY;
 // Use base64 encoded service account credentials from environment variable
 const SERVICE_ACCOUNT_BASE64 = process.env.SERVICE_ACCOUNT_BASE64;
 
+// Google Document AI Configuration
+const DOCUMENT_AI_CONFIG = {
+  projectId: process.env.DOCUMENT_AI_PROJECT_ID || 'your-project-id', // Replace with your GCP project ID
+  location: process.env.DOCUMENT_AI_LOCATION || 'us', // Processor location
+  processorId: process.env.DOCUMENT_AI_PROCESSOR_ID || 'your-processor-id', // Your actual processor ID
+};
+
 // Initialize Google OAuth2 Client for Document AI
 const SCOPES = ['https://www.googleapis.com/auth/cloud-platform'];
 
@@ -97,6 +104,13 @@ function authenticateServiceAccount() {
  */
 function formatDate(date) {
   return format(date, 'yyyy-MM-dd'); // Using date-fns for consistent formatting
+}
+
+/**
+ * Format Date for Gmail Query (YYYY/MM/DD)
+ */
+function formatDateForGmail(date) {
+  return format(date, 'yyyy/MM/dd');
 }
 
 /**
@@ -652,6 +666,23 @@ function calculateFileHash(filePath) {
   });
 }
 
+/**
+ * Calculate Buffer Hash
+ */
+function calculateBufferHash(buffer) {
+  return crypto.createHash('sha256').update(buffer).digest('hex');
+}
+
+/**
+ * Check if the file is a PDF based on content type and filename
+ */
+function isPdfFile(contentType, filename) {
+  const ext = path.extname(filename).toLowerCase();
+  return (
+    contentType === 'application/pdf' || ext === '.pdf'
+  );
+}
+
 // Ensure input folder exists
 fs.ensureDirSync(INPUT_FOLDER);
 
@@ -1128,73 +1159,170 @@ app.get('/gmail-progress/:sessionId', (req, res) => {
   });
 });
 
-// Function to download Gmail attachments
+// Function to download Gmail attachments with filtering and keywords
 async function downloadGmailAttachments(auth, startDate, endDate) {
   const gmail = google.gmail({ version: 'v1', auth });
-  const attachmentsFolder = path.join(INPUT_FOLDER, 'attachments');
-  fs.ensureDirSync(attachmentsFolder);
 
-  const query = `after:${formatDate(startDate)} before:${formatDate(endDate)} has:attachment (filename:pdf OR filename:jpg OR filename:jpeg OR filename:png OR filename:tif OR filename:tiff)`;
+  // Create folder to save attachments
+  const folderName = `קבלות ${formatDate(startDate)} עד ${formatDate(endDate)}`;
+  const folderPath = path.join(INPUT_FOLDER, folderName);
+  fs.ensureDirSync(folderPath);
 
-  let messages = [];
+  // Prepare date queries
+  const startDateQuery = formatDateForGmail(startDate);
+  const endDateQuery = formatDateForGmail(endDate);
+
+  const query = `after:${startDateQuery} before:${endDateQuery}`;
+  console.log('Gmail query:', query);
+
+  const excludedSenders = [
+    'חברת חשמל לישראל',
+    'עיריית תל אביב-יפו',
+    'ארנונה - עיריית תל-אביב-יפו',
+  ];
+  const keywords = ['קבלה', 'חשבונית', 'חשבונית מס', 'הקבלה'];
+
   let nextPageToken = null;
+  const allMessageIds = [];
 
+  // Fetch all message IDs matching the query
   do {
     const res = await gmail.users.messages.list({
       userId: 'me',
       q: query,
-      maxResults: 100,
       pageToken: nextPageToken,
+      maxResults: 500,
     });
-
-    if (res.data.messages) {
-      messages = messages.concat(res.data.messages);
-    }
-
+    const messages = res.data.messages || [];
+    allMessageIds.push(...messages);
     nextPageToken = res.data.nextPageToken;
   } while (nextPageToken);
 
-  console.log(`Found ${messages.length} messages with attachments.`);
-
-  for (const message of messages) {
+  // Process each message
+  for (const messageData of allMessageIds) {
     const msg = await gmail.users.messages.get({
       userId: 'me',
-      id: message.id,
+      id: messageData.id,
+      format: 'full',
     });
 
-    const parts = msg.data.payload.parts;
-    if (!parts) continue;
+    const headers = msg.data.payload.headers;
+    const fromHeader = headers.find((h) => h.name === 'From');
+    const subjectHeader = headers.find((h) => h.name === 'Subject');
+    const dateHeader = headers.find((h) => h.name === 'Date');
 
-    for (const part of parts) {
-      if (part.filename && part.body && part.body.attachmentId) {
-        const attachment = await gmail.users.messages.attachments.get({
-          userId: 'me',
-          messageId: message.id,
-          id: part.body.attachmentId,
-        });
+    const sender = fromHeader ? fromHeader.value : '';
+    const subject = subjectHeader ? subjectHeader.value : '';
+    const messageDateStr = dateHeader ? dateHeader.value : '';
+    const messageDate = new Date(messageDateStr);
 
-        const data = attachment.data.data;
-        const fileData = Buffer.from(data, 'base64');
+    // Check if message date is within range
+    if (messageDate < startDate || messageDate > endDate) {
+      continue;
+    }
 
-        const sanitizedFilename = sanitize(part.filename) || 'unnamed_attachment';
-        const filePath = path.join(attachmentsFolder, sanitizedFilename);
+    // Exclusion logic
+    let excludeThread = false;
+    let keywordFound = false;
 
-        // Check for duplicate files
-        const fileHash = crypto.createHash('sha256').update(fileData).digest('hex');
-        if (processedFilesSet.has(fileHash)) {
-          console.log(`Skipping duplicate attachment: ${sanitizedFilename}`);
-          continue;
-        } else {
-          processedFilesSet.add(fileHash);
+    for (const excludedSender of excludedSenders) {
+      if (sender.includes(excludedSender)) {
+        excludeThread = true;
+        for (const keyword of keywords) {
+          if (subject.includes(keyword)) {
+            keywordFound = true;
+            break; // No need to check further if keyword is found
+          }
         }
+        break; // No need to check other senders
+      }
+    }
 
-        fs.writeFileSync(filePath, fileData);
-        console.log(`Saved attachment: ${filePath}`);
+    // Decide whether to skip the thread
+    if (excludeThread && !keywordFound) {
+      // Skip this thread
+      console.log('Skipping message from excluded sender:', sender);
+      continue;
+    }
+
+    let receiptFoundInThread = false; // Flag to indicate if a receipt PDF has been found in this thread
+
+    // First pass: check if there's a receipt PDF in the message
+    if (msg.data.payload.parts) {
+      for (const part of msg.data.payload.parts) {
+        if (part.filename && part.filename.length > 0) {
+          const normalizedFileName = part.filename.toLowerCase();
+          if (
+            normalizedFileName.startsWith('receipt') &&
+            part.mimeType === 'application/pdf'
+          ) {
+            receiptFoundInThread = true;
+            break; // Found a receipt in this message
+          }
+        }
+      }
+    }
+
+    // Second pass: process the attachments based on whether receipt was found
+    if (msg.data.payload.parts) {
+      for (const part of msg.data.payload.parts) {
+        if (part.filename && part.filename.length > 0) {
+          const attachmentId = part.body.attachmentId;
+          if (!attachmentId) continue;
+
+          const attachment = await gmail.users.messages.attachments.get({
+            userId: 'me',
+            messageId: messageData.id,
+            id: attachmentId,
+          });
+
+          const data = attachment.data.data;
+          const buffer = Buffer.from(data, 'base64');
+
+          const contentType = part.mimeType;
+          const fileName = part.filename;
+          const isPDF = isPdfFile(contentType, fileName);
+
+          if (isPDF) {
+            const normalizedFileName = fileName.toLowerCase();
+            if (receiptFoundInThread) {
+              // If receipt is found in the thread, collect only PDFs starting with "receipt"
+              if (normalizedFileName.startsWith('receipt')) {
+                // Check for duplicate files
+                const fileHash = calculateBufferHash(buffer);
+                if (processedFilesSet.has(fileHash)) {
+                  console.log(`Skipping duplicate attachment: ${fileName}`);
+                  continue;
+                } else {
+                  processedFilesSet.add(fileHash);
+                }
+
+                const filePath = path.join(folderPath, sanitize(fileName));
+                fs.writeFileSync(filePath, buffer);
+                console.log(`Saved attachment: ${filePath}`);
+              }
+            } else {
+              // If no receipt is found, collect the PDF as usual
+              // Check for duplicate files
+              const fileHash = calculateBufferHash(buffer);
+              if (processedFilesSet.has(fileHash)) {
+                console.log(`Skipping duplicate attachment: ${fileName}`);
+                continue;
+              } else {
+                processedFilesSet.add(fileHash);
+              }
+
+              const filePath = path.join(folderPath, sanitize(fileName));
+              fs.writeFileSync(filePath, buffer);
+              console.log(`Saved attachment: ${filePath}`);
+            }
+          }
+        }
       }
     }
   }
 
-  return attachmentsFolder;
+  return folderPath;
 }
 
 // User Logout Route
