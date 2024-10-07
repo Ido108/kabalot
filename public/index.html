@@ -104,7 +104,7 @@
       >
         <div class="mt-4">
           <h3>עיבוד קבצים מג'ימייל</h3>
-          <form id="gmail-form">
+          <form id="gmail-auth-form" action="/start-gmail-auth" method="POST">
             <div class="mb-3">
               <label for="email" class="form-label">כתובת ג'ימייל</label>
               <input
@@ -116,64 +116,10 @@
                 placeholder="הכנס את כתובת הג'ימייל שלך"
               />
             </div>
-            <div class="mb-3">
-              <label for="startDate" class="form-label">תאריך התחלה</label>
-              <input
-                type="date"
-                id="startDate"
-                name="startDate"
-                class="form-control"
-                required
-              />
-            </div>
-            <div class="mb-3">
-              <label for="endDate" class="form-label">תאריך סיום</label>
-              <input
-                type="date"
-                id="endDate"
-                name="endDate"
-                class="form-control"
-                required
-              />
-            </div>
-            <div class="mb-3">
-              <label for="fullName" class="form-label">שם מלא</label>
-              <input
-                type="text"
-                id="fullName"
-                name="fullName"
-                class="form-control"
-                required
-                placeholder="הכנס את שמך המלא"
-              />
-            </div>
-            <div class="mb-3">
-              <label for="filePrefix" class="form-label">קידומת קובץ</label>
-              <input
-                type="text"
-                id="filePrefix"
-                name="filePrefix"
-                class="form-control"
-                placeholder="הכנס קידומת עבור קובץ הפלט"
-              />
-            </div>
-            <div class="mb-3">
-              <label for="additional-files" class="form-label">העלה קבצים נוספים</label>
-              <input
-                class="form-control"
-                type="file"
-                id="additional-files"
-                name="additionalFiles"
-                multiple
-                accept=".pdf,.jpg,.jpeg,.png,.tiff,.tif"
-              />
-            </div>
-            <button type="button" id="gmail-button" class="btn btn-success">
-              התחל עיבוד
+            <button type="submit" class="btn btn-success">
+              התחבר לג'ימייל
             </button>
           </form>
-          <!-- Gmail Progress Log -->
-          <div id="gmail-progress-log"></div>
         </div>
       </div>
     </div>
@@ -247,76 +193,6 @@
         progressLog.innerHTML += `
           <div class="progress-item">
             <p>${item.fileName}: ${item.status}</p>
-            <div class="progress">
-              <div
-                class="progress-bar"
-                role="progressbar"
-                style="width: ${item.progress}%"
-                aria-valuenow="${item.progress}"
-                aria-valuemin="0"
-                aria-valuemax="100"
-              >${item.progress}%</div>
-            </div>
-            ${item.downloadLink ? `<a href="${item.downloadLink}" class="btn btn-success mt-3">הורד קובץ אקסל</a>` : ''}
-          </div>
-        `;
-      });
-    }
-
-    // Gmail Processing
-    const gmailButton = document.getElementById('gmail-button');
-    const gmailForm = document.getElementById('gmail-form');
-    const gmailProgressLog = document.getElementById('gmail-progress-log');
-    const additionalFilesInput = document.getElementById('additional-files');
-
-    gmailButton.addEventListener('click', () => {
-      const email = document.getElementById('email').value;
-      if (!email) {
-        alert('אנא הכנס את כתובת הג\'ימייל שלך.');
-        return;
-      }
-
-      startGmailProcessing();
-    });
-
-    function startGmailProcessing() {
-      const formData = new FormData(gmailForm);
-      const additionalFiles = additionalFilesInput.files;
-      for (const file of additionalFiles) {
-        formData.append('additionalFiles', file);
-      }
-
-      fetch('/process-gmail', {
-        method: 'POST',
-        body: formData,
-      })
-        .then((response) => response.json())
-        .then((data) => {
-          const sessionId = data.sessionId;
-
-          // Start listening to progress events
-          const eventSource = new EventSource(`/gmail-progress/${sessionId}`);
-          eventSource.onmessage = function (e) {
-            const progressData = JSON.parse(e.data);
-            updateGmailProgressLog(progressData);
-          };
-
-          eventSource.onerror = function () {
-            console.error('EventSource failed.');
-            eventSource.close();
-          };
-        })
-        .catch((error) => {
-          console.error('Gmail processing failed:', error);
-        });
-    }
-
-    function updateGmailProgressLog(progressData) {
-      gmailProgressLog.innerHTML = '';
-      progressData.forEach((item) => {
-        gmailProgressLog.innerHTML += `
-          <div class="progress-item">
-            <p>${item.status}</p>
             <div class="progress">
               <div
                 class="progress-bar"

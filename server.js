@@ -878,9 +878,9 @@ function authenticateGmail(req, res, next) {
     next();
   } else {
     // No tokens, redirect to Gmail authentication
-    const email = req.body.email || req.session.email || '';
+    const email = req.session.email || req.query.email || '';
     if (!email) {
-      res.redirect('/');
+      res.redirect('/gmail-auth');
       return;
     }
 
@@ -898,6 +898,11 @@ function authenticateGmail(req, res, next) {
     res.redirect(authUrl);
   }
 }
+
+// Route to display Gmail authentication page
+app.get('/gmail-auth', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'gmail-auth.html'));
+});
 
 // Route to initiate Gmail authentication
 app.post('/start-gmail-auth', (req, res) => {
