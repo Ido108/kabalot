@@ -1167,10 +1167,12 @@ async function processNextGmailTask() {
 
     // Get all files from userFolder
     let files = fs.readdirSync(userFolder).map((file) => path.join(userFolder, file));
+    files = files.concat(task.additionalFiles || []);
+
     console.log('Files found:', files);
 
     if (files.length === 0) {
-      progressEmitter.emit('progress', [{ status: 'No attachments found.', progress: 100 }]);
+      progressEmitter.emit('progress', [{ status: 'No files found to process.', progress: 100 }]);
       return;
     }
 
@@ -1398,20 +1400,19 @@ app.get('/gmail', authenticateGmail, (req, res) => {
 
 // Handle Gmail Processing with Progress Logging
 const additionalUpload = multer({
-  storage: additionalStorage, // Use the new storage configuration
+  storage: additionalStorage,
   fileFilter: function (req, file, cb) {
-    // Accept PDF and common image files
     const ext = path.extname(file.originalname).toLowerCase();
     const allowedExtensions = ['.pdf', '.jpg', '.jpeg', '.png', '.tiff', '.tif'];
     if (allowedExtensions.includes(ext)) {
       cb(null, true);
     } else {
       console.warn(`Skipped unsupported file type: ${file.originalname}`);
-      cb(null, false); // Skip the file without throwing an error
+      cb(null, false);
     }
   },
-  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit per file
-}).array('additionalFiles', 100);
+  limits: { fileSize: 50 * 1024 * 1024 },
+}).array('additionalFiles', 100); // Make sure this matches the name in your form
 
 
 const gmailTaskQueue = [];
@@ -1424,7 +1425,7 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, (req, res) => {
   const sessionId = req.session.sessionId;
   const userFolder = path.join(INPUT_FOLDER, sessionId);
   fs.ensureDirSync(userFolder);
-
+  const additionalFiles = req.files ? req.files.map(file => file.path) : [];
   const progressEmitter = new EventEmitter();
   progressEmitters.set(sessionId, progressEmitter);
 
@@ -1436,6 +1437,7 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, (req, res) => {
     endDate: req.body.endDate,
     idNumber: req.body.idNumber || '',
     progressEmitter,
+    additionalFiles, 
     req,
   };
 
