@@ -87,20 +87,29 @@
 
   <!-- Custom JavaScript -->
   <script>
+    // Gmail Login and Processing
+    const gmailLoginButton = document.getElementById('gmail-login-button');
+    const gmailFormContainer = document.getElementById('gmail-form-container');
     const gmailButton = document.getElementById('gmail-button');
     const gmailForm = document.getElementById('gmail-form');
-    const gmailProgressLog = document.getElementById('gmail-progress-log');
+    const gmailProgressLog = document.getElementById('gmail-progress-log'); // Correct variable
     const additionalFilesInput = document.getElementById('additional-files');
-    const idNumberInput = document.getElementById('idNumber');
+    const gmailIdNumberInput = document.getElementById('idNumber');
+
+    gmailLoginButton.addEventListener('click', () => {
+      // Redirect to Google OAuth login
+      window.location.href = '/start-gmail-auth';
+    });
 
     // Function to check if the user is authenticated
     function checkAuthentication() {
       fetch('/is-authenticated')
         .then((response) => response.json())
         .then((data) => {
-          if (!data.authenticated) {
-            // Redirect to the main page or show the login button
-            window.location.href = '/';
+          if (data.authenticated) {
+            // Hide the login button and show the Gmail form
+            gmailLoginButton.style.display = 'none';
+            gmailFormContainer.style.display = 'block';
           }
         })
         .catch((error) => {
@@ -151,11 +160,14 @@
         })
         .catch((error) => {
           console.error('Gmail processing failed:', error);
+          // Re-enable the Gmail button in case of error
+          gmailButton.disabled = false;
+          gmailButton.textContent = 'התחל עיבוד';
         });
     }
 
     function updateGmailProgressLog(progressData) {
-      gmailProgressLog.innerHTML = '';
+      gmailProgressLog.innerHTML = ''; // Use gmailProgressLog instead of progressLog
       let processingComplete = false;
       progressData.forEach((item) => {
         let statusHtml = `<p>${item.fileName || ''}: ${item.status}</p>`;
@@ -198,7 +210,7 @@
           `;
         }
 
-        progressLog.innerHTML += `
+        gmailProgressLog.innerHTML += `
           <div class="progress-item">
             ${statusHtml}
             ${progressHtml}

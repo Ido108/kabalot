@@ -299,11 +299,12 @@
       }
     }
     // Gmail Login and Processing
+    // Gmail Login and Processing
     const gmailLoginButton = document.getElementById('gmail-login-button');
     const gmailFormContainer = document.getElementById('gmail-form-container');
     const gmailButton = document.getElementById('gmail-button');
     const gmailForm = document.getElementById('gmail-form');
-    const gmailProgressLog = document.getElementById('gmail-progress-log');
+    const gmailProgressLog = document.getElementById('gmail-progress-log'); // Correct variable
     const additionalFilesInput = document.getElementById('additional-files');
     const gmailIdNumberInput = document.getElementById('idNumber');
 
@@ -371,13 +372,16 @@
         })
         .catch((error) => {
           console.error('Gmail processing failed:', error);
+          // Re-enable the Gmail button in case of error
+          gmailButton.disabled = false;
+          gmailButton.textContent = 'התחל עיבוד';
         });
     }
 
 
 
     function updateGmailProgressLog(progressData) {
-      gmailProgressLog.innerHTML = '';
+      gmailProgressLog.innerHTML = ''; // Use gmailProgressLog instead of progressLog
       let processingComplete = false;
       progressData.forEach((item) => {
         let statusHtml = `<p>${item.fileName || ''}: ${item.status}</p>`;
@@ -420,7 +424,7 @@
           `;
         }
 
-        progressLog.innerHTML += `
+        gmailProgressLog.innerHTML += `
           <div class="progress-item">
             ${statusHtml}
             ${progressHtml}
