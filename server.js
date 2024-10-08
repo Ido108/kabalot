@@ -14,7 +14,7 @@ const { google } = require('googleapis');
 const cors = require('cors');
 const Excel = require('exceljs');
 const { parse, format } = require('date-fns');
-
+const EventEmitter = require('events');
 const session = require('express-session');
 const events = require('events'); // For progress events
 const archiver = require('archiver'); // For creating ZIP files
