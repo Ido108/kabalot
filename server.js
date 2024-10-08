@@ -1,6 +1,7 @@
 // server.js
 
 require('dotenv').config(); // Load environment variables
+const { v4: uuidv4 } = require('uuid');
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
@@ -32,6 +33,9 @@ app.use(
     secret: process.env.SESSION_SECRET || 'your_session_secret', // Replace with your own secret
     resave: false,
     saveUninitialized: true,
+    cookie: {
+      maxAge: 3600000, // Session expires after 1 hour (adjust as needed)
+    },
   })
 );
 
@@ -791,7 +795,13 @@ fs.ensureDirSync(INPUT_FOLDER);
 // Set up Multer for handling file uploads
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
-    cb(null, INPUT_FOLDER);
+    // Generate or retrieve the session ID
+    if (!req.session.sessionId) {
+      req.session.sessionId = uuidv4();
+    }
+    const userFolder = path.join(INPUT_FOLDER, req.session.sessionId);
+    fs.ensureDirSync(userFolder); // Ensure the directory exists
+    cb(null, userFolder);
   },
   filename: function (req, file, cb) {
     // Sanitize filename
@@ -815,7 +825,6 @@ const upload = multer({
   },
   limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit per file
 }).array('files', 100); // Max 100 files
-
 // Progress Emitters
 const uploadProgressEmitters = {};
 const gmailProgressEmitters = {};
@@ -829,20 +838,26 @@ app.get('/', (req, res) => {
 
 // Handle File Upload and Processing with Progress Logging
 app.post('/upload', upload, async (req, res) => {
-  const uploadId = Date.now().toString();
-  const progressEmitter = new events.EventEmitter();
-  uploadProgressEmitters[uploadId] = progressEmitter;
+  // Generate or retrieve the session ID
+  if (!req.session.sessionId) {
+    req.session.sessionId = uuidv4();
+  }
+  const sessionId = req.session.sessionId;
+  const userFolder = path.join(INPUT_FOLDER, sessionId);
+  fs.ensureDirSync(userFolder);
 
-  // Send the uploadId to the client
-  res.json({ uploadId });
+  const progressEmitter = new events.EventEmitter();
+  req.session.progressEmitter = progressEmitter;
+
+  // Send a response to the client indicating the session ID
+  res.json({ sessionId });
 
   if (!req.files || req.files.length === 0) {
     progressEmitter.emit('progress', [{ status: 'No files uploaded', progress: 0 }]);
-    delete uploadProgressEmitters[uploadId];
     return;
   }
 
-  console.log(`Received ${req.files.length} file(s). Starting processing...`);
+  console.log(`Received ${req.files.length} file(s) from session ${sessionId}. Starting processing...`);
 
   try {
     const files = req.files.map((file) => file.path);
@@ -871,32 +886,34 @@ app.post('/upload', upload, async (req, res) => {
     for (let i = 0; i < files.length; i++) {
       const filePath = files[i];
       const fileName = path.basename(filePath);
-  
+
       // Update status to 'Processing'
       progressData[i].status = 'Processing';
       progressData[i].progress = 25;
       emitProgress();
-  
+
       // Process the file
       const expenseData = await processFile(filePath, serviceAccountAuth, idNumber);
-  
+
       if (expenseData) {
         expenses.push(expenseData);
-  
+
         // Update progress data with expense information
         progressData[i].status = 'Completed';
         progressData[i].progress = 100;
         progressData[i].businessName = expenseData.BusinessName || 'N/A';
         progressData[i].date = expenseData.Date || 'N/A';
-        progressData[i].totalPrice = expenseData.TotalPrice ? parseFloat(expenseData.TotalPrice).toFixed(2) : 'N/A';
+        progressData[i].totalPrice = expenseData.TotalPrice
+          ? parseFloat(expenseData.TotalPrice).toFixed(2)
+          : 'N/A';
       } else {
         progressData[i].status = 'Failed';
         progressData[i].progress = 100;
       }
-  
+
       // Round progress percentages
       progressData[i].progress = Math.round(progressData[i].progress);
-  
+
       emitProgress();
     }
 
@@ -907,7 +924,7 @@ app.post('/upload', upload, async (req, res) => {
 
       const excelPath = await createExpenseExcel(
         expenses,
-        INPUT_FOLDER,
+        userFolder,
         filePrefix,
         startDate,
         endDate,
@@ -917,7 +934,7 @@ app.post('/upload', upload, async (req, res) => {
 
       // Create ZIP file of processed files
       const zipFileName = `processed_files_${Date.now()}.zip`;
-      const zipFilePath = await createZipFile(files, INPUT_FOLDER, zipFileName);
+      const zipFilePath = await createZipFile(files, userFolder, zipFileName);
       console.log('Processed files ZIP created.');
 
       // Provide download links
@@ -950,15 +967,14 @@ app.post('/upload', upload, async (req, res) => {
       ...progressData,
       { status: `Processing Error: ${processingError.message}`, progress: 100 },
     ]);
-  } finally {
-    delete uploadProgressEmitters[uploadId];
   }
 });
 
+
 // Endpoint for Upload Progress
-app.get('/upload-progress/:uploadId', (req, res) => {
-  const uploadId = req.params.uploadId;
-  const progressEmitter = uploadProgressEmitters[uploadId];
+
+app.get('/upload-progress', (req, res) => {
+  const progressEmitter = req.session.progressEmitter;
 
   if (!progressEmitter) {
     res.status(404).end();
@@ -980,12 +996,21 @@ app.get('/upload-progress/:uploadId', (req, res) => {
   });
 });
 
+
 // Download Route - Serve the generated files
 app.get('/download/:filename', (req, res) => {
   const { filename } = req.params;
   const decodedFilename = decodeURIComponent(filename);
+  const sessionId = req.session.sessionId;
 
-  // Search for the file in INPUT_FOLDER and its subfolders
+  if (!sessionId) {
+    res.status(403).send('Access denied.');
+    return;
+  }
+
+  const userFolder = path.join(INPUT_FOLDER, sessionId);
+
+  // Search for the file in userFolder and its subfolders
   const findFile = (dir) => {
     const files = fs.readdirSync(dir);
     for (const file of files) {
@@ -1001,7 +1026,7 @@ app.get('/download/:filename', (req, res) => {
     return null;
   };
 
-  const filePath = findFile(INPUT_FOLDER);
+  const filePath = findFile(userFolder);
 
   if (filePath && fs.existsSync(filePath)) {
     const ext = path.extname(filePath).toLowerCase();
@@ -1024,6 +1049,7 @@ app.get('/download/:filename', (req, res) => {
     res.status(404).send('File not found.');
   }
 });
+
 
 // Gmail Authentication and Processing Routes
 
@@ -1165,11 +1191,18 @@ const additionalUpload = multer({
 
 
 app.post('/process-gmail', authenticateGmail, additionalUpload, async (req, res) => {
-  const sessionId = Date.now().toString();
-  const progressEmitter = new events.EventEmitter();
-  gmailProgressEmitters[sessionId] = progressEmitter;
+  // Generate or retrieve the session ID
+  if (!req.session.sessionId) {
+    req.session.sessionId = uuidv4();
+  }
+  const sessionId = req.session.sessionId;
+  const userFolder = path.join(INPUT_FOLDER, sessionId);
+  fs.ensureDirSync(userFolder);
 
-  // Send the sessionId to the client
+  const progressEmitter = new events.EventEmitter();
+  req.session.gmailProgressEmitter = progressEmitter;
+
+  // Send a response to the client indicating the session ID
   res.json({ sessionId });
 
   try {
@@ -1186,21 +1219,12 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, async (req, res)
 
     progressEmitter.emit('progress', [{ status: 'Downloading Gmail attachments...', progress: 10 }]);
 
-    const attachmentsFolder = getAttachmentsFolder(req);
+    // Download Gmail attachments into userFolder
+    await downloadGmailAttachments(auth, startDateObj, endDateObj, userFolder);
+    console.log('Attachments downloaded to:', userFolder);
 
-    // Ensure the directory exists
-    fs.ensureDirSync(attachmentsFolder);
-
-    // Move additional files to the attachmentsFolder (already handled by multer)
-
-    // Download Gmail attachments into attachmentsFolder
-    await downloadGmailAttachments(auth, startDateObj, endDateObj, attachmentsFolder);
-    console.log('Attachments downloaded to:', attachmentsFolder);
-
-    // Get all files from attachmentsFolder
-    let files = fs.readdirSync(attachmentsFolder).map((file) =>
-      path.join(attachmentsFolder, file)
-    );
+    // Get all files from userFolder
+    let files = fs.readdirSync(userFolder).map((file) => path.join(userFolder, file));
     console.log('Files found:', files);
 
     if (files.length === 0) {
@@ -1213,48 +1237,50 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, async (req, res)
       status: 'Pending',
       progress: 0,
     }));
-  
+
     const expenses = [];
     const serviceAccountAuth = authenticateServiceAccount();
     await serviceAccountAuth.authorize();
-  
+
     for (let i = 0; i < files.length; i++) {
       const filePath = files[i];
       const fileName = path.basename(filePath);
-  
+
       // Update status to 'Processing'
       progressData[i].status = 'Processing';
       progressData[i].progress = 25;
       progressEmitter.emit('progress', progressData);
-  
+
       // Process the file
       const expenseData = await processFile(filePath, serviceAccountAuth, idNumber);
-  
+
       if (expenseData) {
         expenses.push(expenseData);
-  
+
         // Update progress data with expense information
         progressData[i].status = 'Completed';
         progressData[i].progress = 100;
         progressData[i].businessName = expenseData.BusinessName || 'N/A';
         progressData[i].date = expenseData.Date || 'N/A';
-        progressData[i].totalPrice = expenseData.TotalPrice ? parseFloat(expenseData.TotalPrice).toFixed(2) : 'N/A';
+        progressData[i].totalPrice = expenseData.TotalPrice
+          ? parseFloat(expenseData.TotalPrice).toFixed(2)
+          : 'N/A';
       } else {
         progressData[i].status = 'Failed';
         progressData[i].progress = 100;
       }
-  
+
       // Round progress percentages
       progressData[i].progress = Math.round(progressData[i].progress);
-  
+
       progressEmitter.emit('progress', progressData);
     }
-  
+
     progressEmitter.emit('progress', [{ status: 'Creating Excel file...', progress: 80 }]);
 
     const excelPath = await createExpenseExcel(
       expenses,
-      attachmentsFolder,
+      userFolder,
       customPrefix,
       startDate,
       endDate
@@ -1264,7 +1290,7 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, async (req, res)
 
     // Create ZIP file of processed files
     const zipFileName = `processed_files_${Date.now()}.zip`;
-    const zipFilePath = await createZipFile(files, attachmentsFolder, zipFileName);
+    const zipFilePath = await createZipFile(files, userFolder, zipFileName);
     console.log('Processed files ZIP created.');
 
     // Provide download links
@@ -1284,20 +1310,17 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, async (req, res)
         ],
       },
     ]);
-
   } catch (error) {
     console.error('Error processing Gmail attachments:', error);
     progressEmitter.emit('progress', [{ status: `Error: ${error.message}`, progress: 100 }]);
-  } finally {
-    delete gmailProgressEmitters[sessionId];
   }
 });
 
 
+
 // Endpoint for Gmail Progress
-app.get('/gmail-progress/:sessionId', (req, res) => {
-  const sessionId = req.params.sessionId;
-  const progressEmitter = gmailProgressEmitters[sessionId];
+app.get('/gmail-progress', (req, res) => {
+  const progressEmitter = req.session.gmailProgressEmitter;
 
   if (!progressEmitter) {
     res.status(404).end();
@@ -1318,6 +1341,7 @@ app.get('/gmail-progress/:sessionId', (req, res) => {
     progressEmitter.removeListener('progress', onProgress);
   });
 });
+
 function formatDateForGmail(date) {
   return format(date, 'yyyy/MM/dd');
 }
