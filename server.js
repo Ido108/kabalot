@@ -440,7 +440,6 @@ async function parseReceiptWithDocumentAI(filePath, serviceAccountAuth) {
       }
     }
 
-
     let exchangeRate;
     if (hasUSD) {
       // Only fetch exchange rate if USD is detected
@@ -1328,6 +1327,7 @@ async function downloadGmailAttachments(auth, startDate, endDate, folderPath) {
   const gmail = google.gmail({ version: 'v1', auth });
 
   const excludedSubjectKeywords = ['חשבון עסקה'];
+  endDate.setHours(23, 59, 59, 999);
   const queryEndDate = new Date(endDate.getTime() + 24 * 60 * 60 * 1000);
   // Prepare date queries
   const startDateQuery = formatDateForGmail(startDate);
