@@ -1142,6 +1142,7 @@ async function processNextGmailTask() {
     idNumber,
     progressEmitter,
     req,
+    additionalFiles, // Make sure this is included in your task object
   } = task;
 
   try {
@@ -1165,9 +1166,15 @@ async function processNextGmailTask() {
     await downloadGmailAttachments(auth, startDateObj, endDateObj, userFolder);
     console.log('Attachments downloaded to:', userFolder);
 
-    // Get all files from userFolder
+    // Get all files from userFolder (Gmail attachments)
     let files = fs.readdirSync(userFolder).map((file) => path.join(userFolder, file));
-    files = files.concat(task.additionalFiles || []);
+    
+    // Add additional uploaded files without duplicating
+    additionalFiles.forEach(file => {
+      if (!files.includes(file)) {
+        files.push(file);
+      }
+    });
 
     console.log('Files found:', files);
 
