@@ -31,11 +31,14 @@ app.set('view engine', 'ejs');
 // Configure session middleware
 app.use(
   session({
-    secret: process.env.SESSION_SECRET || 'your_session_secret', // Replace with your own secret
+    secret: process.env.SESSION_SECRET || 'your_session_secret',
     resave: false,
-    saveUninitialized: true,
+    saveUninitialized: false,
+    rolling: true, // Reset the cookie Max-Age on every response
     cookie: {
-      maxAge: 3600000, // Session expires after 1 hour (adjust as needed)
+      maxAge: 3600000, // 1 hour
+      sameSite: 'lax', // Important for maintaining session across OAuth redirects
+      // secure: false, // Set to true if using HTTPS
     },
   })
 );
@@ -374,8 +377,14 @@ async function processNextTask() {
     // Schedule folder deletion after 1 hour
     scheduleFolderDeletion(userFolder, 3600000);
 
-    // Clean up progressEmitter from the Map
-    progressEmitters.delete(sessionId);
+    // Store the final progress data in the session under 'completedUploadTask'
+    req.session.completedUploadTask = {
+      progressData: progressData, // The final progress data array
+      timestamp: Date.now(),
+    };
+
+    // Clean up progressEmitter
+    uploadProgressEmitters[sessionId] = null;
 
     // Process the next task
     isProcessing = false;
@@ -1010,7 +1019,7 @@ app.post('/upload', upload, async (req, res) => {
   fs.ensureDirSync(userFolder);
 
   const progressEmitter = new EventEmitter();
-  progressEmitters.set(sessionId, progressEmitter);
+  uploadProgressEmitters[sessionId] = progressEmitter
 
   // Send a response to the client indicating the session ID
   res.json({ sessionId });
@@ -1046,28 +1055,36 @@ app.post('/upload', upload, async (req, res) => {
 // Endpoint for Upload Progress
 app.get('/upload-progress', (req, res) => {
   const sessionId = req.session.sessionId;
-  const progressEmitter = progressEmitters.get(sessionId);
-
-  if (!progressEmitter) {
-    res.status(404).end();
-    return;
-  }
+  const progressEmitter = uploadProgressEmitters[sessionId];
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.flushHeaders();
 
-  const onProgress = (data) => {
-    res.write(`data: ${JSON.stringify(data)}\n\n`);
-  };
+  if (progressEmitter) {
+    const onProgress = (data) => {
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
 
-  progressEmitter.on('progress', onProgress);
+    progressEmitter.on('progress', onProgress);
 
-  req.on('close', () => {
-    progressEmitter.removeListener('progress', onProgress);
-    // Clean up after the connection is closed
-    progressEmitters.delete(sessionId);
-  });
+    // Keep-Alive Interval
+    const keepAliveInterval = setInterval(() => {
+      res.write(':\n\n'); // Send a comment to keep the connection alive
+    }, 20000); // Every 20 seconds
+
+    req.on('close', () => {
+      clearInterval(keepAliveInterval);
+      progressEmitter.removeListener('progress', onProgress);
+      uploadProgressEmitters[sessionId] = null;
+    });
+  } else if (req.session.completedUploadTask) {
+    // Send the completed task data
+    res.write(`data: ${JSON.stringify(req.session.completedUploadTask.progressData)}\n\n`);
+    res.end();
+  } else {
+    res.status(204).end(); // No content
+  }
 });
 
 // Download Route - Serve the generated files
@@ -1143,7 +1160,7 @@ async function processNextGmailTask() {
     idNumber,
     progressEmitter,
     req,
-    additionalFiles, // Make sure this is included in your task object
+    additionalFiles,
   } = task;
 
   try {
@@ -1169,7 +1186,7 @@ async function processNextGmailTask() {
 
     // Get all files from userFolder (Gmail attachments)
     let files = fs.readdirSync(userFolder).map((file) => path.join(userFolder, file));
-    
+
     // Add additional uploaded files without duplicating
     additionalFiles.forEach(file => {
       if (!files.includes(file)) {
@@ -1262,22 +1279,22 @@ async function processNextGmailTask() {
         ],
       },
     ]);
-
-    // Schedule deletion after 1 hour (3600000 milliseconds)
-    scheduleFolderDeletion(userFolder, 3600000); // 1 hour delay
-
-    // Clean up progressEmitter
-    req.session.gmailProgressEmitter = null;
   } catch (error) {
     console.error('Error processing Gmail attachments:', error);
     progressEmitter.emit('progress', [{ status: `Error: ${error.message}`, progress: 100 }]);
   } finally {
-    // Schedule deletion after 1 hour (3600000 milliseconds)
-    scheduleFolderDeletion(userFolder, 3600000); // 1 hour delay
-  
+    // Schedule folder deletion after 1 hour
+    scheduleFolderDeletion(userFolder, 3600000);
+
+    // Store the final progress data in the session under 'completedGmailTask'
+    req.session.completedGmailTask = {
+      progressData: progressData, // The final progress data array
+      timestamp: Date.now(),
+    };
+
     // Clean up progressEmitter
-    progressEmitters.delete(sessionId);
-  
+    gmailProgressEmitters[sessionId] = null;
+
     // Process the next task
     isGmailProcessing = false;
     processNextGmailTask();
@@ -1473,27 +1490,68 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, (req, res) => {
 // Endpoint for Gmail Progress
 app.get('/gmail-progress', (req, res) => {
   const sessionId = req.session.sessionId;
-  const progressEmitter = progressEmitters.get(sessionId);
-
-  if (!progressEmitter) {
-    res.status(404).end();
-    return;
-  }
+  const progressEmitter = gmailProgressEmitters[sessionId];
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.flushHeaders();
 
-  const onProgress = (data) => {
-    res.write(`data: ${JSON.stringify(data)}\n\n`);
-  };
+  if (progressEmitter) {
+    const onProgress = (data) => {
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
 
-  progressEmitter.on('progress', onProgress);
+    progressEmitter.on('progress', onProgress);
 
-  req.on('close', () => {
-    progressEmitter.removeListener('progress', onProgress);
-    progressEmitters.delete(sessionId);
-  });
+    // Keep-Alive Interval
+    const keepAliveInterval = setInterval(() => {
+      res.write(':\n\n'); // Send a comment to keep the connection alive
+    }, 20000); // Every 20 seconds
+
+    req.on('close', () => {
+      clearInterval(keepAliveInterval);
+      progressEmitter.removeListener('progress', onProgress);
+      gmailProgressEmitters[sessionId] = null;
+    });
+  } else if (req.session.completedGmailTask) {
+    // Send the completed task data
+    res.write(`data: ${JSON.stringify(req.session.completedGmailTask.progressData)}\n\n`);
+    res.end();
+  } else {
+    res.status(204).end(); // No content
+  }
+});
+
+app.get('/get-last-task', (req, res) => {
+  const sessionId = req.session.sessionId;
+  const taskType = req.query.type; // 'upload' or 'gmail'
+
+  if (!sessionId || !taskType) {
+    res.json({ taskExists: false });
+    return;
+  }
+
+  let progressEmitter;
+  let completedTask;
+
+  if (taskType === 'upload') {
+    progressEmitter = uploadProgressEmitters[sessionId];
+    completedTask = req.session.completedUploadTask;
+  } else if (taskType === 'gmail') {
+    progressEmitter = gmailProgressEmitters[sessionId];
+    completedTask = req.session.completedGmailTask;
+  } else {
+    res.json({ taskExists: false });
+    return;
+  }
+
+  if (progressEmitter) {
+    res.json({ taskExists: true, status: 'in-progress' });
+  } else if (completedTask) {
+    res.json({ taskExists: true, status: 'completed', progressData: completedTask.progressData });
+  } else {
+    res.json({ taskExists: false });
+  }
 });
 
 function formatDateForGmail(date) {

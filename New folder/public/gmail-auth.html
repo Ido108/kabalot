@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="he">
+<head>
+  <meta charset="UTF-8">
+  <title>התחברות לג'ימייל</title>
+  <!-- Bootstrap 5 CSS -->
+  <link
+    rel="stylesheet"
+    href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
+    crossorigin="anonymous"
+  />
+  <!-- Custom Styles -->
+  <link rel="stylesheet" href="/custom.css" />
+</head>
+<body>
+  <!-- Navigation Bar -->
+  <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+    <div class="container-fluid">
+      <a class="navbar-brand" href="#">עיבוד מסמכים</a>
+    </div>
+  </nav>
+
+  <div class="container mt-4">
+    <h3>התחברות לג'ימייל</h3>
+    <form id="gmail-auth-form" action="/start-gmail-auth" method="POST">
+      <div class="mb-3">
+        <label for="email" class="form-label">כתובת ג'ימייל</label>
+        <input
+          type="email"
+          id="email"
+          name="email"
+          class="form-control"
+          required
+          placeholder="הכנס את כתובת הג'ימייל שלך"
+        />
+      </div>
+      <button type="submit" class="btn btn-success">
+        התחבר לג'ימייל
+      </button>
+    </form>
+  </div>
+
+  <!-- Footer -->
+  <div class="footer">
+    <p>&copy; 2024 עידו הנסיך</p>
+  </div>
+
+  <!-- Bootstrap 5 JS -->
+  <script
+    src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"
+    crossorigin="anonymous"
+  ></script>
+</body>
+</html>

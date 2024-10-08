@@ -1,0 +1,208 @@
+/* public/custom.css */
+
+/* General Styles */
+body {
+  background-color: #f0f2f5;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  color: #343a40;
+}
+
+.navbar-brand {
+  font-weight: bold;
+  font-size: 1.5rem;
+}
+
+h3 {
+  margin-top: 20px;
+  margin-bottom: 20px;
+  font-weight: bold;
+}
+
+.container {
+  max-width: 800px;
+}
+
+/* Form Styles */
+.form-label {
+  font-weight: bold;
+}
+
+.form-control {
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+  font-size: 1rem;
+}
+
+.btn {
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+  font-size: 1rem;
+}
+
+.btn-primary {
+  background-color: #007bff;
+  border-color: #007bff;
+}
+
+.btn-success {
+  background-color: #28a745;
+  border-color: #28a745;
+}
+
+.btn-primary:hover,
+.btn-primary:focus,
+.btn-primary:active {
+  background-color: #0069d9;
+  border-color: #0062cc;
+}
+
+.btn-success:hover,
+.btn-success:focus,
+.btn-success:active {
+  background-color: #218838;
+  border-color: #1e7e34;
+}
+
+/* Tabs Styles */
+.nav-tabs .nav-link {
+  border-radius: 0.5rem 0.5rem 0 0;
+  font-size: 1.1rem;
+}
+
+.nav-tabs .nav-link.active {
+  background-color: #ffffff;
+  border-color: #dee2e6 #dee2e6 #ffffff;
+}
+
+/* Custom styles for the Gmail tab button */
+.nav-tabs .nav-link.gmail-tab-special {
+  background-color: gold;
+  color: black;
+  font-weight: bold;
+}
+
+.nav-tabs .nav-link.gmail-tab-special.active {
+  background-color: goldenrod;
+  color: white;
+}
+
+.nav-tabs .nav-link.gmail-tab-special:hover {
+  background-color: darkgoldenrod;
+  color: white;
+}
+
+/* Tab Content */
+.tab-content {
+  background-color: #ffffff;
+  border: 1px solid #dee2e6;
+  border-top: none;
+  padding: 20px;
+  border-radius: 0 0 0.5rem 0.5rem;
+}
+
+/* Progress Log */
+#progress-log,
+#gmail-progress-log {
+  max-height: 300px;
+  overflow-y: auto;
+  margin-top: 20px;
+  padding-bottom: 20px;
+}
+
+.progress-item {
+  margin-bottom: 10px;
+}
+
+.progress-item p {
+  margin-bottom: 5px;
+  font-weight: normal;
+}
+
+.progress {
+  height: 1rem;
+  background-color: #e9ecef;
+  border-radius: 0.5rem;
+}
+
+.progress-bar {
+  background-color: #007bff;
+  font-weight: bold;
+  font-size: 0.8rem;
+  line-height: 1rem;
+  transition: width 0.6s ease;
+}
+
+/* Download Buttons */
+.download-buttons {
+  margin-top: 20px;
+  text-align: center;
+}
+
+.download-buttons .btn {
+  margin: 5px;
+  font-size: 1.1rem;
+}
+
+/* Footer */
+.footer {
+  margin-top: 50px;
+  padding: 20px 0;
+  background-color: #343a40;
+  color: #ffffff;
+  text-align: center;
+}
+
+.footer a {
+  color: #ffffff;
+  text-decoration: underline;
+}
+
+/* Responsive Adjustments */
+@media (max-width: 576px) {
+  .btn {
+    font-size: 0.9rem;
+    padding: 0.6rem;
+  }
+
+  h3 {
+    font-size: 1.2rem;
+    text-align: center;
+  }
+
+  .navbar-brand {
+    font-size: 1.2rem;
+  }
+
+  .container {
+    padding: 0 15px;
+  }
+
+  .progress-bar {
+    font-size: 0.7rem;
+  }
+
+  #progress-log,
+  #gmail-progress-log {
+    max-height: 200px;
+  }
+
+  .download-buttons .btn {
+    font-size: 1rem;
+    margin: 3px;
+  }
+}
+
+/* RTL Support */
+body {
+  direction: rtl;
+}
+
+.form-label,
+.nav-link,
+.btn {
+  text-align: right;
+}
+
+.navbar-brand {
+  text-align: right;
+}
