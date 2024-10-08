@@ -205,10 +205,10 @@
 
       // Disable the upload button and change its text
       uploadButton.disabled = true;
-      uploadButton.textContent = 'עיבוד...';
+      uploadButton.textContent = 'עיבוד...'; // "Processing..."
 
       // Show an immediate message in the progress log
-      progressLog.innerHTML = '<p>עיבוד התחיל, אנא המתן...</p>';
+      progressLog.innerHTML = '<p>עיבוד התחיל, אנא המתן...</p>'; // "Processing started, please wait..."
 
       fetch('/upload', {
         method: 'POST',
@@ -216,8 +216,18 @@
       })
         .then((response) => response.json())
         .then((data) => {
+
           // Start listening to progress events
-          startUploadProgressListener();
+          const eventSource = new EventSource('/upload-progress');
+          eventSource.onmessage = function (e) {
+            const progressData = JSON.parse(e.data);
+            updateProgressLog(progressData);
+          };
+
+          eventSource.onerror = function () {
+            console.error('EventSource failed.');
+            eventSource.close();
+          };
         })
         .catch((error) => {
           console.error('Upload failed:', error);
@@ -227,29 +237,16 @@
         });
     }
 
-    function startUploadProgressListener() {
-      const eventSource = new EventSource('/upload-progress');
-      eventSource.onmessage = function (e) {
-        const progressData = JSON.parse(e.data);
-        updateProgressLog(progressData);
-      };
-
-      eventSource.onerror = function () {
-        console.error('EventSource failed.');
-        eventSource.close();
-      };
-    }
-
     function updateProgressLog(progressData) {
       progressLog.innerHTML = '';
       let processingComplete = false;
-      let downloadButtonsHtml = '';
+      let downloadButtonsHtml = ''; // Collect download buttons here
 
       progressData.forEach((item) => {
         let statusHtml = `<p>${item.fileName || ''}: ${item.status}</p>`;
 
         if (item.queuePosition) {
-          statusHtml += `<p>מיקום בתור: ${item.queuePosition}</p>`;
+          statusHtml += `<p>מיקום בתור: ${item.queuePosition}</p>`; // "Queue Position"
         }
 
         let progressHtml = '';
@@ -278,10 +275,11 @@
           `;
         }
 
+        // Collect download buttons if present
         if (item.downloadLinks && item.downloadLinks.length > 0) {
           downloadButtonsHtml = `<div class="download-buttons">`;
           item.downloadLinks.forEach((link) => {
-            downloadButtonsHtml += `<a href="${link.url}" class="btn btn-success mt-3">${link.label}</a> `;
+            downloadButtonsHtml += `<a href="${link.url}" class="btn btn-success mt-3">${link.label}</a>`;
           });
           downloadButtonsHtml += `<a href="/" class="btn btn-primary mt-3">חזור לדף הראשי</a>`;
           downloadButtonsHtml += `</div>`;
@@ -297,45 +295,17 @@
         `;
       });
 
+      // If processing is complete, show download buttons at the top
       if (processingComplete) {
         // Re-enable the upload button
         uploadButton.disabled = false;
         uploadButton.textContent = 'התחל עיבוד';
 
-        // Show download buttons at the top
         progressLog.innerHTML = downloadButtonsHtml + progressLog.innerHTML;
 
-        // Scroll to download buttons
+        // Scroll to the download buttons
         document.querySelector('.download-buttons').scrollIntoView({ behavior: 'smooth' });
       }
-    }
-
-    // On page load, check for existing task
-    window.onload = function () {
-      // Check for existing upload task
-      checkExistingTask();
-
-      // Check for Gmail authentication
-      checkAuthentication();
-    };
-
-    function checkExistingTask() {
-      fetch('/get-last-task?type=upload')
-        .then((response) => response.json())
-        .then((data) => {
-          if (data.taskExists) {
-            if (data.status === 'in-progress') {
-              // Start listening to progress events
-              startUploadProgressListener();
-            } else if (data.status === 'completed') {
-              // Display the final progress data and download links
-              updateProgressLog(data.progressData);
-            }
-          }
-        })
-        .catch((error) => {
-          console.error('Error checking existing task:', error);
-        });
     }
 
     // Gmail Login and Processing
@@ -361,15 +331,15 @@
             // Hide the login button and show the Gmail form
             gmailLoginButton.style.display = 'none';
             gmailFormContainer.style.display = 'block';
-
-            // Check for existing Gmail processing task
-            checkExistingGmailTask();
           }
         })
         .catch((error) => {
           console.error('Error checking authentication:', error);
         });
     }
+
+    // Call the function on page load
+    window.onload = checkAuthentication;
 
     gmailButton.addEventListener('click', () => {
       startGmailProcessing();
@@ -396,8 +366,18 @@
       })
         .then((response) => response.json())
         .then((data) => {
+
           // Start listening to progress events
-          startGmailProgressListener();
+          const eventSource = new EventSource('/gmail-progress');
+          eventSource.onmessage = function (e) {
+            const progressData = JSON.parse(e.data);
+            updateGmailProgressLog(progressData);
+          };
+
+          eventSource.onerror = function () {
+            console.error('EventSource failed.');
+            eventSource.close();
+          };
         })
         .catch((error) => {
           console.error('Gmail processing failed:', error);
@@ -407,29 +387,16 @@
         });
     }
 
-    function startGmailProgressListener() {
-      const eventSource = new EventSource('/gmail-progress');
-      eventSource.onmessage = function (e) {
-        const progressData = JSON.parse(e.data);
-        updateGmailProgressLog(progressData);
-      };
-
-      eventSource.onerror = function () {
-        console.error('EventSource failed.');
-        eventSource.close();
-      };
-    }
-
     function updateGmailProgressLog(progressData) {
       gmailProgressLog.innerHTML = '';
       let processingComplete = false;
-      let downloadButtonsHtml = '';
+      let downloadButtonsHtml = ''; // Collect download buttons here
 
       progressData.forEach((item) => {
         let statusHtml = `<p>${item.fileName || ''}: ${item.status}</p>`;
 
         if (item.queuePosition) {
-          statusHtml += `<p>מיקום בתור: ${item.queuePosition}</p>`;
+          statusHtml += `<p>מיקום בתור: ${item.queuePosition}</p>`; // "Queue Position"
         }
 
         let progressHtml = '';
@@ -458,10 +425,11 @@
           `;
         }
 
+        // Collect download buttons if present
         if (item.downloadLinks && item.downloadLinks.length > 0) {
           downloadButtonsHtml = `<div class="download-buttons">`;
           item.downloadLinks.forEach((link) => {
-            downloadButtonsHtml += `<a href="${link.url}" class="btn btn-success mt-3">${link.label}</a> `;
+            downloadButtonsHtml += `<a href="${link.url}" class="btn btn-success mt-3">${link.label}</a>`;
           });
           downloadButtonsHtml += `<a href="/" class="btn btn-primary mt-3">חזור לדף הראשי</a>`;
           downloadButtonsHtml += `</div>`;
@@ -477,36 +445,17 @@
         `;
       });
 
+      // If processing is complete, show download buttons at the top
       if (processingComplete) {
         // Re-enable the Gmail button
         gmailButton.disabled = false;
         gmailButton.textContent = 'התחל עיבוד';
 
-        // Show download buttons at the top
         gmailProgressLog.innerHTML = downloadButtonsHtml + gmailProgressLog.innerHTML;
 
-        // Scroll to download buttons
+        // Scroll to the download buttons
         document.querySelector('.download-buttons').scrollIntoView({ behavior: 'smooth' });
       }
-    }
-
-    function checkExistingGmailTask() {
-      fetch('/get-last-task?type=gmail')
-        .then((response) => response.json())
-        .then((data) => {
-          if (data.taskExists) {
-            if (data.status === 'in-progress') {
-              // Start listening to progress events
-              startGmailProgressListener();
-            } else if (data.status === 'completed') {
-              // Display the final progress data and download links
-              updateGmailProgressLog(data.progressData);
-            }
-          }
-        })
-        .catch((error) => {
-          console.error('Error checking existing Gmail task:', error);
-        });
     }
 
   </script>
