@@ -41,6 +41,7 @@ app.use(
 );
 const taskQueue = [];
 let isProcessing = false;
+const progressEmitters = new Map();
 // Configuration Constants
 const date = new Date();
 const folderName = `${date.getFullYear()}-${(date.getMonth() + 1)
