@@ -107,6 +107,57 @@
           <button id="gmail-login-button" class="btn btn-success">
             התחבר עם גוגל
           </button>
+          <!-- Gmail Form will be displayed after login -->
+          <div id="gmail-form-container" style="display: none;">
+            <form id="gmail-form">
+              <div class="mb-3">
+                <label for="startDate" class="form-label">תאריך התחלה</label>
+                <input
+                  type="date"
+                  id="startDate"
+                  name="startDate"
+                  class="form-control"
+                  required
+                />
+              </div>
+              <div class="mb-3">
+                <label for="endDate" class="form-label">תאריך סיום</label>
+                <input
+                  type="date"
+                  id="endDate"
+                  name="endDate"
+                  class="form-control"
+                  required
+                />
+              </div>
+              <div class="mb-3">
+                <label for="idNumber" class="form-label">מספר תעודת זהות (ל-PDF מוגן)</label>
+                <input
+                  type="text"
+                  id="idNumber"
+                  name="idNumber"
+                  class="form-control"
+                  placeholder="הכנס מספר תעודת זהות אם יש קבצים מוגנים בסיסמה"
+                />
+              </div>
+              <div class="mb-3">
+                <label for="additional-files" class="form-label">העלה קבצים נוספים</label>
+                <input
+                  class="form-control"
+                  type="file"
+                  id="additional-files"
+                  name="additionalFiles"
+                  multiple
+                  accept=".pdf,.jpg,.jpeg,.png,.tiff,.tif"
+                />
+              </div>
+              <button type="button" id="gmail-button" class="btn btn-success">
+                התחל עיבוד
+              </button>
+            </form>
+            <!-- Gmail Progress Log -->
+            <div id="gmail-progress-log"></div>
+          </div>
         </div>
       </div>
     </div>
@@ -204,12 +255,107 @@
       });
     }
 
-    // Gmail Login
+    // Gmail Login and Processing
     const gmailLoginButton = document.getElementById('gmail-login-button');
+    const gmailFormContainer = document.getElementById('gmail-form-container');
+    const gmailButton = document.getElementById('gmail-button');
+    const gmailForm = document.getElementById('gmail-form');
+    const gmailProgressLog = document.getElementById('gmail-progress-log');
+    const additionalFilesInput = document.getElementById('additional-files');
+    const gmailIdNumberInput = document.getElementById('idNumber');
+
     gmailLoginButton.addEventListener('click', () => {
       // Redirect to Google OAuth login
       window.location.href = '/start-gmail-auth';
     });
+
+    // Function to check if the user is authenticated
+    function checkAuthentication() {
+      fetch('/is-authenticated')
+        .then((response) => response.json())
+        .then((data) => {
+          if (data.authenticated) {
+            // Hide the login button and show the Gmail form
+            gmailLoginButton.style.display = 'none';
+            gmailFormContainer.style.display = 'block';
+          }
+        })
+        .catch((error) => {
+          console.error('Error checking authentication:', error);
+        });
+    }
+
+    // Call the function on page load
+    window.onload = checkAuthentication;
+
+    gmailButton.addEventListener('click', () => {
+      startGmailProcessing();
+    });
+
+    function startGmailProcessing() {
+      const formData = new FormData(gmailForm);
+      const additionalFiles = additionalFilesInput.files;
+      const idNumber = gmailIdNumberInput.value;
+
+      formData.append('idNumber', idNumber);
+      for (const file of additionalFiles) {
+        formData.append('additionalFiles', file);
+      }
+
+      fetch('/process-gmail', {
+        method: 'POST',
+        body: formData,
+      })
+        .then((response) => response.json())
+        .then((data) => {
+          const sessionId = data.sessionId;
+
+          // Start listening to progress events
+          const eventSource = new EventSource(`/gmail-progress/${sessionId}`);
+          eventSource.onmessage = function (e) {
+            const progressData = JSON.parse(e.data);
+            updateGmailProgressLog(progressData);
+          };
+
+          eventSource.onerror = function () {
+            console.error('EventSource failed.');
+            eventSource.close();
+          };
+        })
+        .catch((error) => {
+          console.error('Gmail processing failed:', error);
+        });
+    }
+
+    function updateGmailProgressLog(progressData) {
+      gmailProgressLog.innerHTML = '';
+      progressData.forEach((item) => {
+        let downloadLinksHtml = '';
+        if (item.downloadLinks && item.downloadLinks.length > 0) {
+          item.downloadLinks.forEach((link) => {
+            downloadLinksHtml += `<a href="${link.url}" class="btn btn-success mt-3">${link.label}</a> `;
+          });
+          // Add Return to Main Page button
+          downloadLinksHtml += `<a href="/" class="btn btn-primary mt-3">חזור לדף הראשי</a>`;
+        }
+        gmailProgressLog.innerHTML += `
+          <div class="progress-item">
+            <p>${item.status}</p>
+            <div class="progress">
+              <div
+                class="progress-bar"
+                role="progressbar"
+                style="width: ${item.progress}%"
+                aria-valuenow="${item.progress}"
+                aria-valuemin="0"
+                aria-valuemax="100"
+              >${item.progress}%</div>
+            </div>
+            ${downloadLinksHtml}
+          </div>
+        `;
+      });
+    }
   </script>
 </body>
 </html>

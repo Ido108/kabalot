@@ -43,17 +43,6 @@
           required
         />
       </div>
-      <!-- Optional Name Input -->
-      <div class="mb-3">
-        <label for="name" class="form-label">שם (אופציונלי)</label>
-        <input
-          type="text"
-          id="name"
-          name="name"
-          class="form-control"
-          placeholder="הכנס את שמך (לא חובה)"
-        />
-      </div>
       <div class="mb-3">
         <label for="idNumber" class="form-label">מספר תעודת זהות (ל-PDF מוגן)</label>
         <input
@@ -61,7 +50,7 @@
           id="idNumber"
           name="idNumber"
           class="form-control"
-          placeholder="מס' זהות (לפתיחת קבצים מוגנים בסיסמא)"
+          placeholder="הכנס מספר תעודת זהות אם יש קבצים מוגנים בסיסמה"
         />
       </div>
       <div class="mb-3">
@@ -101,7 +90,24 @@
     const gmailProgressLog = document.getElementById('gmail-progress-log');
     const additionalFilesInput = document.getElementById('additional-files');
     const idNumberInput = document.getElementById('idNumber');
-    const nameInput = document.getElementById('name');
+
+    // Function to check if the user is authenticated
+    function checkAuthentication() {
+      fetch('/is-authenticated')
+        .then((response) => response.json())
+        .then((data) => {
+          if (!data.authenticated) {
+            // Redirect to the main page or show the login button
+            window.location.href = '/';
+          }
+        })
+        .catch((error) => {
+          console.error('Error checking authentication:', error);
+        });
+    }
+
+    // Call the function on page load
+    window.onload = checkAuthentication;
 
     gmailButton.addEventListener('click', () => {
       startGmailProcessing();
@@ -111,10 +117,8 @@
       const formData = new FormData(gmailForm);
       const additionalFiles = additionalFilesInput.files;
       const idNumber = idNumberInput.value;
-      const name = nameInput.value;
 
       formData.append('idNumber', idNumber);
-      formData.append('name', name);
       for (const file of additionalFiles) {
         formData.append('additionalFiles', file);
       }
