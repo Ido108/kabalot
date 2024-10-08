@@ -1273,16 +1273,15 @@ app.get('/gmail-progress/:sessionId', (req, res) => {
     progressEmitter.removeListener('progress', onProgress);
   });
 });
-
 function formatDateForGmail(date) {
   return format(date, 'yyyy/MM/dd');
 }
+
 // Function to download Gmail attachments
 async function downloadGmailAttachments(auth, startDate, endDate, folderPath) {
   const gmail = google.gmail({ version: 'v1', auth });
 
-  // Create folder to save attachments (already ensured in the route)
-  // fs.ensureDirSync(folderPath);
+  const excludedSubjectKeywords = ['חשבון עסקה'];
 
   // Prepare date queries
   const startDateQuery = formatDateForGmail(startDate);
@@ -1334,6 +1333,23 @@ async function downloadGmailAttachments(auth, startDate, endDate, folderPath) {
 
     // Check if message date is within range
     if (messageDate < startDate || messageDate > endDate) {
+      continue;
+    }
+
+    // Exclude messages with certain keywords in the subject
+    let subjectContainsExcludedKeyword = false;
+    for (const excludedKeyword of excludedSubjectKeywords) {
+      if (subject.includes(excludedKeyword)) {
+        subjectContainsExcludedKeyword = true;
+        console.log(
+          `Skipping message with subject containing excluded keyword: ${excludedKeyword}`
+        );
+        break;
+      }
+    }
+
+    if (subjectContainsExcludedKeyword) {
+      // Skip this message
       continue;
     }
 
@@ -1422,6 +1438,7 @@ async function downloadGmailAttachments(auth, startDate, endDate, folderPath) {
 
   return folderPath;
 }
+
 
 
 
