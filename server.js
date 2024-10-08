@@ -1033,7 +1033,7 @@ app.post('/upload', upload, async (req, res) => {
   if (isProcessing) {
     const queuePosition = getQueuePosition(taskQueue, sessionId);
     progressEmitter.emit('progress', [
-      { status: `Your task is in a queue at position ${queuePosition}. It will start processing shortly.`, progress: 0, queuePosition },
+      { status: `המשימה שלך בתור במקום ${queuePosition}. העיבוד יתחיל בקרוב.`, progress: 0, queuePosition },
     ]);
   } else {
     // Start processing immediately if no other tasks are running

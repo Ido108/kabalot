@@ -149,13 +149,13 @@
     }
 
     function updateGmailProgressLog(progressData) {
-      gmailProgressLog.innerHTML = '';
+      progressLog.innerHTML = '';
+      let processingComplete = false;
       progressData.forEach((item) => {
         let statusHtml = `<p>${item.fileName || ''}: ${item.status}</p>`;
-        
-        // Add queue position information if available
+
         if (item.queuePosition) {
-          statusHtml += `<p>Queue Position: ${item.queuePosition}</p>`;
+          statusHtml += `<p>מיקום בתור: ${item.queuePosition}</p>`; // "Queue Position"
         }
 
         let progressHtml = '';
@@ -192,7 +192,7 @@
           `;
         }
 
-        gmailProgressLog.innerHTML += `
+        progressLog.innerHTML += `
           <div class="progress-item">
             ${statusHtml}
             ${progressHtml}
@@ -200,8 +200,18 @@
             ${downloadLinksHtml}
           </div>
         `;
+
+        if (item.progress === 100 && (item.status.includes('Processing complete') || item.downloadLinks)) {
+          processingComplete = true;
+        }
       });
+
+      if (processingComplete) {
+        // Re-enable the upload button
+        uploadButton.disabled = false;
+        uploadButton.textContent = 'התחל עיבוד';
+      }
     }
-  </script>
+</script>
 </body>
 </html>
