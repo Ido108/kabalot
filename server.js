@@ -270,6 +270,31 @@ function detectCurrency(value) {
 // Exchange rate cache to store rates by date
 const exchangeRateCache = {};
 
+function getAttachmentsFolder(req) {
+  const startDate = req.body.startDate;
+  const endDate = req.body.endDate;
+
+  const startDateObj = new Date(startDate);
+  const endDateObj = new Date(endDate);
+  endDateObj.setHours(23, 59, 59, 999); // Set to end of day
+
+  const folderName = `קבלות ${formatDate(startDateObj)} עד ${formatDate(endDateObj)}`;
+  const folderPath = path.join(INPUT_FOLDER, folderName);
+  return folderPath;
+}
+const additionalStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const attachmentsFolder = getAttachmentsFolder(req);
+    fs.ensureDirSync(attachmentsFolder); // Ensure the directory exists
+    cb(null, attachmentsFolder);
+  },
+  filename: function (req, file, cb) {
+    // Sanitize filename
+    const sanitized = sanitize(file.originalname) || 'unnamed_attachment';
+    cb(null, sanitized);
+  },
+});
+
 /**
  * Parse Receipt with Google Document AI
  * @param {string} filePath - Path to the file (PDF or Image)
@@ -1113,7 +1138,7 @@ app.get('/process-gmail', authenticateGmail, (req, res) => {
 
 // Handle Gmail Processing with Progress Logging
 const additionalUpload = multer({
-  storage: storage,
+  storage: additionalStorage, // Use the new storage configuration
   fileFilter: function (req, file, cb) {
     // Accept PDF and common image files
     const ext = path.extname(file.originalname).toLowerCase();
@@ -1128,6 +1153,7 @@ const additionalUpload = multer({
   limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit per file
 }).array('additionalFiles', 100);
 
+
 app.post('/process-gmail', authenticateGmail, additionalUpload, async (req, res) => {
   const sessionId = Date.now().toString();
   const progressEmitter = new events.EventEmitter();
@@ -1139,8 +1165,7 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, async (req, res)
   try {
     const auth = req.oAuth2Client;
     const { startDate, endDate } = req.body;
-    const customPrefix = 'סיכום הוצאות'; // Default file prefix
-    const name = req.body.name || ''; // Optional name input
+    const customPrefix = 'סיכום הוצאות'; // Default value
 
     console.log('Processing Gmail attachments from', startDate, 'to', endDate);
 
@@ -1150,20 +1175,22 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, async (req, res)
 
     progressEmitter.emit('progress', [{ status: 'Downloading Gmail attachments...', progress: 10 }]);
 
-    const attachmentsFolder = await downloadGmailAttachments(auth, startDateObj, endDateObj);
+    const attachmentsFolder = getAttachmentsFolder(req);
+
+    // Ensure the directory exists
+    fs.ensureDirSync(attachmentsFolder);
+
+    // Move additional files to the attachmentsFolder (already handled by multer)
+
+    // Download Gmail attachments into attachmentsFolder
+    await downloadGmailAttachments(auth, startDateObj, endDateObj, attachmentsFolder);
     console.log('Attachments downloaded to:', attachmentsFolder);
 
+    // Get all files from attachmentsFolder
     let files = fs.readdirSync(attachmentsFolder).map((file) =>
       path.join(attachmentsFolder, file)
     );
     console.log('Files found:', files);
-
-    // Include additional files
-    if (req.files && req.files.length > 0) {
-      for (const file of req.files) {
-        files.push(file.path);
-      }
-    }
 
     if (files.length === 0) {
       progressEmitter.emit('progress', [{ status: 'No attachments found.', progress: 100 }]);
@@ -1199,8 +1226,7 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, async (req, res)
       attachmentsFolder,
       customPrefix,
       startDate,
-      endDate,
-      name // Optional name
+      endDate
     );
     console.log('Expenses extracted:', expenses.length);
     console.log('Excel file created at:', excelPath);
@@ -1236,6 +1262,7 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, async (req, res)
   }
 });
 
+
 // Endpoint for Gmail Progress
 app.get('/gmail-progress/:sessionId', (req, res) => {
   const sessionId = req.params.sessionId;
@@ -1265,13 +1292,11 @@ function formatDateForGmail(date) {
   return format(date, 'yyyy/MM/dd');
 }
 // Function to download Gmail attachments
-async function downloadGmailAttachments(auth, startDate, endDate) {
+async function downloadGmailAttachments(auth, startDate, endDate, folderPath) {
   const gmail = google.gmail({ version: 'v1', auth });
 
-  // Create folder to save attachments
-  const folderName = `קבלות ${formatDate(startDate)} עד ${formatDate(endDate)}`;
-  const folderPath = path.join(INPUT_FOLDER, folderName);
-  fs.ensureDirSync(folderPath);
+  // Create folder to save attachments (already ensured in the route)
+  // fs.ensureDirSync(folderPath);
 
   // Prepare date queries
   const startDateQuery = formatDateForGmail(startDate);
@@ -1411,6 +1436,7 @@ async function downloadGmailAttachments(auth, startDate, endDate) {
 
   return folderPath;
 }
+
 
 
 // User Logout Route
