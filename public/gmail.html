@@ -1,3 +1,5 @@
+  <!-- Gmail.html -->
+
 <!DOCTYPE html>
 <html lang="he">
 <head>
@@ -116,13 +118,17 @@
     function startGmailProcessing() {
       const formData = new FormData(gmailForm);
       const additionalFiles = additionalFilesInput.files;
-      // const idNumber = idNumberInput.value; // No need to retrieve idNumber again
-
-      // formData.append('idNumber', idNumber); // Remove this line
 
       for (const file of additionalFiles) {
         formData.append('additionalFiles', file);
       }
+
+      // Disable the Gmail button and change its text
+      gmailButton.disabled = true;
+      gmailButton.textContent = 'עיבוד...';
+
+      // Show immediate message in the progress log
+      gmailProgressLog.innerHTML = '<p>עיבוד התחיל, אנא המתן...</p>';
 
       fetch('/process-gmail', {
         method: 'POST',
