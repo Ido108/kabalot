@@ -371,11 +371,11 @@ async function processNextTask() {
       { status: `Processing Error: ${processingError.message}`, progress: 100 },
     ]);
   } finally {
-    // Schedule deletion after 1 hour (3600000 milliseconds)
-    scheduleFolderDeletion(userFolder, 3600000); // 1 hour delay
+    // Schedule folder deletion after 1 hour
+    scheduleFolderDeletion(userFolder, 3600000);
 
-    // Clean up progressEmitter
-    req.session.progressEmitter = null;
+    // Clean up progressEmitter from the Map
+    progressEmitters.delete(sessionId);
 
     // Process the next task
     isProcessing = false;
@@ -1044,9 +1044,9 @@ app.post('/upload', upload, async (req, res) => {
 
 
 // Endpoint for Upload Progress
-
 app.get('/upload-progress', (req, res) => {
-  const progressEmitter = req.session.progressEmitter;
+  const sessionId = req.session.sessionId;
+  const progressEmitter = progressEmitters.get(sessionId);
 
   if (!progressEmitter) {
     res.status(404).end();
@@ -1065,9 +1065,10 @@ app.get('/upload-progress', (req, res) => {
 
   req.on('close', () => {
     progressEmitter.removeListener('progress', onProgress);
+    // Clean up after the connection is closed
+    progressEmitters.delete(sessionId);
   });
 });
-
 
 // Download Route - Serve the generated files
 // Download Route - Serve the generated files
