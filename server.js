@@ -1115,9 +1115,11 @@ app.get('/gmail-form', authenticateGmail, (req, res) => {
 
 
 // Route to display Gmail processing page
-app.get('/process-gmail', authenticateGmail, (req, res) => {
+// Route to display Gmail processing page
+app.get('/gmail', authenticateGmail, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'gmail.html'));
 });
+
 
 // Handle Gmail Processing with Progress Logging
 const additionalUpload = multer({
