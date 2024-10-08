@@ -88,28 +88,20 @@
   <!-- Custom JavaScript -->
   <script>
     // Gmail Login and Processing
-    const gmailLoginButton = document.getElementById('gmail-login-button');
-    const gmailFormContainer = document.getElementById('gmail-form-container');
     const gmailButton = document.getElementById('gmail-button');
     const gmailForm = document.getElementById('gmail-form');
-    const gmailProgressLog = document.getElementById('gmail-progress-log'); // Correct variable
+    const gmailProgressLog = document.getElementById('gmail-progress-log');
     const additionalFilesInput = document.getElementById('additional-files');
-    const gmailIdNumberInput = document.getElementById('idNumber');
-
-    gmailLoginButton.addEventListener('click', () => {
-      // Redirect to Google OAuth login
-      window.location.href = '/start-gmail-auth';
-    });
+    const idNumberInput = document.getElementById('idNumber');
 
     // Function to check if the user is authenticated
     function checkAuthentication() {
       fetch('/is-authenticated')
         .then((response) => response.json())
         .then((data) => {
-          if (data.authenticated) {
-            // Hide the login button and show the Gmail form
-            gmailLoginButton.style.display = 'none';
-            gmailFormContainer.style.display = 'block';
+          if (!data.authenticated) {
+            // Redirect to the main page or show the login button
+            window.location.href = '/';
           }
         })
         .catch((error) => {
