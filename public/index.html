@@ -76,14 +76,15 @@
                 accept=".pdf,.jpg,.jpeg,.png,.tiff,.tif"
               />
             </div>
+            <!-- Optional Name Input -->
             <div class="mb-3">
-              <label for="filePrefix" class="form-label">קידומת קובץ</label>
+              <label for="name" class="form-label">שם (אופציונלי)</label>
               <input
                 type="text"
-                id="filePrefix"
-                name="filePrefix"
+                id="name"
+                name="name"
                 class="form-control"
-                placeholder="הכנס קידומת עבור קובץ הפלט"
+                placeholder="הכנס את שמך (לא חובה)"
               />
             </div>
             <button type="button" id="upload-button" class="btn btn-primary">
@@ -142,7 +143,7 @@
     const uploadButton = document.getElementById('upload-button');
     const fileInput = document.getElementById('file-input');
     const progressLog = document.getElementById('progress-log');
-    const filePrefixInput = document.getElementById('filePrefix');
+    const nameInput = document.getElementById('name');
 
     uploadButton.addEventListener('click', () => {
       const files = fileInput.files;
@@ -151,13 +152,13 @@
         return;
       }
 
-      const filePrefix = filePrefixInput.value;
-      uploadFiles(files, filePrefix);
+      const name = nameInput.value;
+      uploadFiles(files, name);
     });
 
-    function uploadFiles(files, filePrefix) {
+    function uploadFiles(files, name) {
       const formData = new FormData();
-      formData.append('filePrefix', filePrefix);
+      formData.append('name', name); // Optional name
       for (const file of files) {
         formData.append('files', file);
       }

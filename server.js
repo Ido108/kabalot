@@ -2,7 +2,6 @@
 
 require('dotenv').config(); // Load environment variables
 const express = require('express');
-const archiver = require('archiver');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs-extra');
@@ -16,6 +15,7 @@ const Excel = require('exceljs');
 const { parse, format } = require('date-fns');
 const session = require('express-session');
 const events = require('events'); // For progress events
+const archiver = require('archiver'); // For creating ZIP files
 
 const app = express();
 
@@ -276,42 +276,6 @@ const exchangeRateCache = {};
  * @param {object} serviceAccountAuth - Authenticated service account
  * @returns {object} - Extracted expense data
  */
-/**
- * Create a ZIP file containing the processed files
- * @param {Array} files - Array of file paths to include in the ZIP
- * @param {string} outputFolder - Path to the folder where the ZIP file will be saved
- * @param {string} zipFileName - Desired name of the ZIP file
- * @returns {Promise<string>} - Path to the created ZIP file
- */
-async function createZipFile(files, outputFolder, zipFileName) {
-  return new Promise((resolve, reject) => {
-    const zipFilePath = path.join(outputFolder, zipFileName);
-    const output = fs.createWriteStream(zipFilePath);
-    const archive = archiver('zip', {
-      zlib: { level: 9 }, // Sets the compression level
-    });
-
-    output.on('close', () => {
-      console.log(`ZIP file created at: ${zipFilePath} (${archive.pointer()} total bytes)`);
-      resolve(zipFilePath);
-    });
-
-    archive.on('error', (err) => {
-      console.error('Error creating ZIP file:', err);
-      reject(err);
-    });
-
-    archive.pipe(output);
-
-    files.forEach((filePath) => {
-      const fileName = path.basename(filePath);
-      archive.file(filePath, { name: fileName });
-    });
-
-    archive.finalize();
-  });
-}
-
 async function parseReceiptWithDocumentAI(filePath, serviceAccountAuth) {
   const { projectId, location, processorId } = DOCUMENT_AI_CONFIG;
   const url = `https://${location}-documentai.googleapis.com/v1/projects/${projectId}/locations/${location}/processors/${processorId}:process`;
@@ -517,8 +481,12 @@ async function parseReceiptWithDocumentAI(filePath, serviceAccountAuth) {
  * Create Expense Spreadsheet (Excel) with formatting
  * @param {Array} expenses - Array of expense objects
  * @param {string} folderPath - Path to the folder where Excel file will be saved
+ * @param {string} filePrefix - Prefix for the Excel filename
+ * @param {string} startDate - Start date for the period
+ * @param {string} endDate - End date for the period
+ * @param {string} [name] - Optional name to include in the filename
  */
-async function createExpenseExcel(expenses, folderPath, filePrefix, startDate, endDate, fullName) {
+async function createExpenseExcel(expenses, folderPath, filePrefix, startDate, endDate, name) {
   // Ensure valid dates
   const validStartDate = parse(startDate, 'yyyy-MM-dd', new Date());
   const validEndDate = parse(endDate, 'yyyy-MM-dd', new Date());
@@ -526,12 +494,15 @@ async function createExpenseExcel(expenses, folderPath, filePrefix, startDate, e
   // Format dates
   const startDateFormatted = format(validStartDate, 'dd-MM-yy');
   const endDateFormatted = format(validEndDate, 'dd-MM-yy');
-  
+
   // Create base filename
-  let baseFileName = `${filePrefix}-${startDateFormatted}-to-${endDateFormatted}-${fullName.replace(/\s+/g, '_')}`;
+  let baseFileName = `${filePrefix}-${startDateFormatted}-to-${endDateFormatted}`;
+  if (name && name.trim() !== '') {
+    baseFileName += `-${name.replace(/\s+/g, '_')}`;
+  }
   let fileName = `${baseFileName}.xlsx`;
   let fullPath = path.join(folderPath, fileName);
-  
+
   // Check for existing files and add numbering if necessary
   let fileNumber = 1;
   while (fs.existsSync(fullPath)) {
@@ -637,9 +608,45 @@ async function createExpenseExcel(expenses, folderPath, filePrefix, startDate, e
 }
 
 /**
+ * Create a ZIP file containing the processed files
+ * @param {Array} files - Array of file paths to include in the ZIP
+ * @param {string} outputFolder - Path to the folder where the ZIP file will be saved
+ * @param {string} zipFileName - Desired name of the ZIP file
+ * @returns {Promise<string>} - Path to the created ZIP file
+ */
+async function createZipFile(files, outputFolder, zipFileName) {
+  return new Promise((resolve, reject) => {
+    const zipFilePath = path.join(outputFolder, zipFileName);
+    const output = fs.createWriteStream(zipFilePath);
+    const archive = archiver('zip', {
+      zlib: { level: 9 }, // Sets the compression level
+    });
+
+    output.on('close', () => {
+      console.log(`ZIP file created at: ${zipFilePath} (${archive.pointer()} total bytes)`);
+      resolve(zipFilePath);
+    });
+
+    archive.on('error', (err) => {
+      console.error('Error creating ZIP file:', err);
+      reject(err);
+    });
+
+    archive.pipe(output);
+
+    files.forEach((filePath) => {
+      const fileName = path.basename(filePath);
+      archive.file(filePath, { name: fileName });
+    });
+
+    archive.finalize();
+  });
+}
+
+/**
  * Process a single file
  */
-async function processFiles(files, folderPath, filePrefix, startDate, endDate, fullName) {
+async function processFiles(files, folderPath, filePrefix, startDate, endDate, name) {
   // Authenticate with Service Account for Document AI
   const serviceAccountAuth = authenticateServiceAccount();
   await serviceAccountAuth.authorize(); // Ensure the client is authorized
@@ -694,12 +701,13 @@ async function processFiles(files, folderPath, filePrefix, startDate, endDate, f
   }
 
   if (expenses.length > 0) {
-    const excelPath = await createExpenseExcel(expenses, folderPath, filePrefix, startDate, endDate, fullName);
+    const excelPath = await createExpenseExcel(expenses, folderPath, filePrefix, startDate, endDate, name);
     return { expenses, excelPath };
   }
 
   return { expenses, excelPath: null };
 }
+
 async function processFile(filePath, serviceAccountAuth) {
   const ext = path.extname(filePath).toLowerCase();
   const isPDF = ext === '.pdf';
@@ -782,7 +790,6 @@ app.get('/', (req, res) => {
 });
 
 // Handle File Upload and Processing with Progress Logging
-// Handle File Upload and Processing with Progress Logging
 app.post('/upload', upload, async (req, res) => {
   const uploadId = Date.now().toString();
   const progressEmitter = new events.EventEmitter();
@@ -802,7 +809,8 @@ app.post('/upload', upload, async (req, res) => {
   try {
     const files = req.files.map((file) => file.path);
     const totalFiles = files.length;
-    const filePrefix = req.body.filePrefix || 'סיכום הוצאות';
+    const filePrefix = 'סיכום הוצאות'; // Default file prefix
+    const name = req.body.name || ''; // Optional name input
 
     const progressData = files.map((filePath) => ({
       fileName: path.basename(filePath),
@@ -849,7 +857,6 @@ app.post('/upload', upload, async (req, res) => {
     if (expenses.length > 0) {
       const startDate = formatDate(new Date());
       const endDate = formatDate(new Date());
-      const fullName = 'User';
 
       const excelPath = await createExpenseExcel(
         expenses,
@@ -857,7 +864,7 @@ app.post('/upload', upload, async (req, res) => {
         filePrefix,
         startDate,
         endDate,
-        fullName
+        name // Optional name
       );
       console.log('Expense summary Excel file created.');
 
@@ -880,7 +887,7 @@ app.post('/upload', upload, async (req, res) => {
           progress: 100,
           downloadLinks: [
             { label: 'הורד קובץ אקסל', url: excelUrl },
-            { label: 'הורד קבלות (ZIP)', url: zipUrl },
+            { label: 'הורד קבצים מעובדים (ZIP)', url: zipUrl },
           ],
         },
       ]);
@@ -900,7 +907,6 @@ app.post('/upload', upload, async (req, res) => {
     delete uploadProgressEmitters[uploadId];
   }
 });
-
 
 // Endpoint for Upload Progress
 app.get('/upload-progress/:uploadId', (req, res) => {
@@ -927,7 +933,6 @@ app.get('/upload-progress/:uploadId', (req, res) => {
   });
 });
 
-// Download Route - Serve the generated Excel file
 // Download Route - Serve the generated files
 app.get('/download/:filename', (req, res) => {
   const { filename } = req.params;
@@ -972,7 +977,6 @@ app.get('/download/:filename', (req, res) => {
     res.status(404).send('File not found.');
   }
 });
-
 
 // Gmail Authentication and Processing Routes
 
@@ -1134,8 +1138,9 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, async (req, res)
 
   try {
     const auth = req.oAuth2Client;
-    const { startDate, endDate, fullName, filePrefix } = req.body;
-    const customPrefix = filePrefix || 'סיכום הוצאות'; // Use default if not provided
+    const { startDate, endDate } = req.body;
+    const customPrefix = 'סיכום הוצאות'; // Default file prefix
+    const name = req.body.name || ''; // Optional name input
 
     console.log('Processing Gmail attachments from', startDate, 'to', endDate);
 
@@ -1195,7 +1200,7 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, async (req, res)
       customPrefix,
       startDate,
       endDate,
-      fullName
+      name // Optional name
     );
     console.log('Expenses extracted:', expenses.length);
     console.log('Excel file created at:', excelPath);
@@ -1230,7 +1235,6 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, async (req, res)
     delete gmailProgressEmitters[sessionId];
   }
 });
-
 
 // Endpoint for Gmail Progress
 app.get('/gmail-progress/:sessionId', (req, res) => {
