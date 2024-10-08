@@ -76,15 +76,14 @@
                 accept=".pdf,.jpg,.jpeg,.png,.tiff,.tif"
               />
             </div>
-            <!-- Optional Name Input -->
             <div class="mb-3">
-              <label for="name" class="form-label">שם (אופציונלי)</label>
+              <label for="idNumber" class="form-label">מספר תעודת זהות (ל-PDF מוגן)</label>
               <input
                 type="text"
-                id="name"
-                name="name"
+                id="idNumber"
+                name="idNumber"
                 class="form-control"
-                placeholder="הכנס את שמך (לא חובה)"
+                placeholder="הכנס מספר תעודת זהות אם יש קבצים מוגנים בסיסמה"
               />
             </div>
             <button type="button" id="upload-button" class="btn btn-primary">
@@ -105,22 +104,9 @@
       >
         <div class="mt-4">
           <h3>עיבוד קבצים מג'ימייל</h3>
-          <form id="gmail-auth-form" action="/start-gmail-auth" method="POST">
-            <div class="mb-3">
-              <label for="email" class="form-label">כתובת ג'ימייל</label>
-              <input
-                type="email"
-                id="email"
-                name="email"
-                class="form-control"
-                required
-                placeholder="הכנס את כתובת הג'ימייל שלך"
-              />
-            </div>
-            <button type="submit" class="btn btn-success">
-              התחבר לג'ימייל
-            </button>
-          </form>
+          <button id="gmail-login-button" class="btn btn-success">
+            התחבר עם גוגל
+          </button>
         </div>
       </div>
     </div>
@@ -143,22 +129,22 @@
     const uploadButton = document.getElementById('upload-button');
     const fileInput = document.getElementById('file-input');
     const progressLog = document.getElementById('progress-log');
-    const nameInput = document.getElementById('name');
+    const idNumberInput = document.getElementById('idNumber');
 
     uploadButton.addEventListener('click', () => {
       const files = fileInput.files;
+      const idNumber = idNumberInput.value;
       if (files.length === 0) {
         alert('אנא בחר קבצים להעלאה.');
         return;
       }
 
-      const name = nameInput.value;
-      uploadFiles(files, name);
+      uploadFiles(files, idNumber);
     });
 
-    function uploadFiles(files, name) {
+    function uploadFiles(files, idNumber) {
       const formData = new FormData();
-      formData.append('name', name); // Optional name
+      formData.append('idNumber', idNumber);
       for (const file of files) {
         formData.append('files', file);
       }
@@ -196,6 +182,8 @@
           item.downloadLinks.forEach((link) => {
             downloadLinksHtml += `<a href="${link.url}" class="btn btn-success mt-3">${link.label}</a> `;
           });
+          // Add Return to Main Page button
+          downloadLinksHtml += `<a href="/" class="btn btn-primary mt-3">חזור לדף הראשי</a>`;
         }
         progressLog.innerHTML += `
           <div class="progress-item">
@@ -215,6 +203,13 @@
         `;
       });
     }
+
+    // Gmail Login
+    const gmailLoginButton = document.getElementById('gmail-login-button');
+    gmailLoginButton.addEventListener('click', () => {
+      // Redirect to Google OAuth login
+      window.location.href = '/start-gmail-auth';
+    });
   </script>
 </body>
 </html>

@@ -55,6 +55,16 @@
         />
       </div>
       <div class="mb-3">
+        <label for="idNumber" class="form-label">מספר תעודת זהות (ל-PDF מוגן)</label>
+        <input
+          type="text"
+          id="idNumber"
+          name="idNumber"
+          class="form-control"
+          placeholder="מס' זהות (לפתיחת קבצים מוגנים בסיסמא)"
+        />
+      </div>
+      <div class="mb-3">
         <label for="additional-files" class="form-label">העלה קבצים נוספים</label>
         <input
           class="form-control"
@@ -90,6 +100,8 @@
     const gmailForm = document.getElementById('gmail-form');
     const gmailProgressLog = document.getElementById('gmail-progress-log');
     const additionalFilesInput = document.getElementById('additional-files');
+    const idNumberInput = document.getElementById('idNumber');
+    const nameInput = document.getElementById('name');
 
     gmailButton.addEventListener('click', () => {
       startGmailProcessing();
@@ -98,6 +110,11 @@
     function startGmailProcessing() {
       const formData = new FormData(gmailForm);
       const additionalFiles = additionalFilesInput.files;
+      const idNumber = idNumberInput.value;
+      const name = nameInput.value;
+
+      formData.append('idNumber', idNumber);
+      formData.append('name', name);
       for (const file of additionalFiles) {
         formData.append('additionalFiles', file);
       }
@@ -135,6 +152,8 @@
           item.downloadLinks.forEach((link) => {
             downloadLinksHtml += `<a href="${link.url}" class="btn btn-success mt-3">${link.label}</a> `;
           });
+          // Add Return to Main Page button
+          downloadLinksHtml += `<a href="/" class="btn btn-primary mt-3">חזור לדף הראשי</a>`;
         }
         gmailProgressLog.innerHTML += `
           <div class="progress-item">

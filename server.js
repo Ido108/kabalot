@@ -136,10 +136,7 @@ async function getUsdToIlsExchangeRate(date) {
  * @param {string} password - Password to unlock the PDF
  * @returns {string|null} - Path to the unlocked PDF or null if failed
  */
-async function unlockPdf(
-  filePath,
-  password = PASSWORD_PROTECTED_PDF_PASSWORD
-) {
+async function unlockPdf(filePath, password) {
   if (!PDFCO_API_KEY) {
     throw new Error('PDFCO_API_KEY is not set in environment variables.');
   }
@@ -733,44 +730,43 @@ async function processFiles(files, folderPath, filePrefix, startDate, endDate, n
   return { expenses, excelPath: null };
 }
 
-async function processFile(filePath, serviceAccountAuth) {
+async function processFile(filePath, serviceAccountAuth, idNumber) {
   const ext = path.extname(filePath).toLowerCase();
   const isPDF = ext === '.pdf';
   let processedFilePath = filePath;
 
   if (isPDF) {
     try {
-      // Check if the PDF is encrypted
       const isEncrypted = await isPdfEncrypted(filePath);
       if (isEncrypted) {
         console.log('PDF is encrypted. Attempting to unlock:', filePath);
-        // Attempt to unlock PDF
-        const unlockedPath = await unlockPdf(filePath);
+        const password = idNumber || PASSWORD_PROTECTED_PDF_PASSWORD;
+        const unlockedPath = await unlockPdf(filePath, password);
         if (unlockedPath) {
-          // Overwrite the original file with the unlocked PDF
           fs.copyFileSync(unlockedPath, filePath);
-          fs.unlinkSync(unlockedPath); // Remove the temporary unlocked file
+          fs.unlinkSync(unlockedPath);
           console.log('PDF unlocked and overwritten:', filePath);
-          processedFilePath = filePath; // Continue processing the unlocked file
+          processedFilePath = filePath;
         } else {
           console.log('Failed to unlock PDF:', filePath);
-          return null; // Skip processing if PDF is locked and couldn't be unlocked
+          return null;
         }
       } else {
         console.log('PDF is not encrypted. Proceeding without unlocking:', filePath);
       }
     } catch (error) {
       console.error('Error processing PDF:', filePath, error);
-      return null; // Skip this file if there's an error
+      return null;
     }
   } else {
     console.log('File is an image. Proceeding to process:', filePath);
   }
 
-  // Parse the receipt with Document AI
   const expenseData = await parseReceiptWithDocumentAI(processedFilePath, serviceAccountAuth);
   return expenseData;
 }
+
+
 
 // Ensure input folder exists
 fs.ensureDirSync(INPUT_FOLDER);
@@ -836,6 +832,7 @@ app.post('/upload', upload, async (req, res) => {
     const totalFiles = files.length;
     const filePrefix = 'סיכום הוצאות'; // Default file prefix
     const name = req.body.name || ''; // Optional name input
+    const idNumber = req.body.idNumber || ''; // Get ID number from the form
 
     const progressData = files.map((filePath) => ({
       fileName: path.basename(filePath),
@@ -864,7 +861,7 @@ app.post('/upload', upload, async (req, res) => {
       emitProgress();
 
       // Process the file
-      const expenseData = await processFile(filePath, serviceAccountAuth);
+      const expenseData = await processFile(filePath, serviceAccountAuth, idNumber);
 
       if (expenseData) {
         expenses.push(expenseData);
@@ -1035,11 +1032,9 @@ function authenticateGmail(req, res, next) {
     process.env.GMAIL_REDIRECT_URI
   );
 
-  // Check if we have an access token stored in session
   if (req.session.tokens) {
     oAuth2Client.setCredentials(req.session.tokens);
 
-    // Set up event listener to update tokens if refreshed
     oAuth2Client.on('tokens', (tokens) => {
       if (tokens.refresh_token) {
         req.session.tokens.refresh_token = tokens.refresh_token;
@@ -1050,59 +1045,41 @@ function authenticateGmail(req, res, next) {
     req.oAuth2Client = oAuth2Client;
     next();
   } else {
-    // No tokens, redirect to Gmail authentication
-    const email = req.session.email || req.query.email || '';
-    if (!email) {
-      res.redirect('/gmail-auth');
-      return;
-    }
-
-    // Store the email in session
-    req.session.email = email;
-
-    // Generate an OAuth URL with login_hint to prefill the email
-    const authUrl = oAuth2Client.generateAuthUrl({
-      access_type: 'offline',
-      scope: ['https://www.googleapis.com/auth/gmail.readonly'],
-      prompt: 'consent',
-      login_hint: email,
-    });
-
-    res.redirect(authUrl);
+    res.redirect('/start-gmail-auth');
   }
 }
 
-// Route to display Gmail authentication page
-app.get('/gmail-auth', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'gmail-auth.html'));
+
+app.get('/is-authenticated', (req, res) => {
+  if (req.session.tokens) {
+    res.json({ authenticated: true });
+  } else {
+    res.json({ authenticated: false });
+  }
 });
 
+
+
 // Route to initiate Gmail authentication
-app.post('/start-gmail-auth', (req, res) => {
-  const { email } = req.body;
-  if (!email) {
-    return res.status(400).send('Please enter your Gmail address.');
-  }
-
-  // Store the email in session
-  req.session.email = email;
-
+// Route to initiate Gmail authentication
+app.get('/start-gmail-auth', (req, res) => {
   const oAuth2Client = new google.auth.OAuth2(
     process.env.GMAIL_CLIENT_ID,
     process.env.GMAIL_CLIENT_SECRET,
     process.env.GMAIL_REDIRECT_URI
   );
 
-  // Generate an OAuth URL with login_hint to prefill the email
+  // Generate an OAuth URL without login_hint
   const authUrl = oAuth2Client.generateAuthUrl({
     access_type: 'offline',
     scope: ['https://www.googleapis.com/auth/gmail.readonly'],
     prompt: 'consent',
-    login_hint: email,
   });
 
   res.redirect(authUrl);
 });
+
+
 
 // OAuth2 callback route
 app.get('/oauth2callback', async (req, res) => {
@@ -1122,14 +1099,20 @@ app.get('/oauth2callback', async (req, res) => {
     oAuth2Client.setCredentials(tokens);
     // Store tokens in session
     req.session.tokens = tokens;
-    req.oAuth2Client = oAuth2Client;
     // Redirect to the Gmail processing page
-    res.redirect('/process-gmail');
+    res.redirect('/gmail');
   } catch (error) {
     console.error('Error retrieving access token', error);
     res.status(500).send('Authentication failed');
   }
 });
+
+
+// Route to display Gmail processing form
+app.get('/gmail-form', authenticateGmail, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'gmail-form.html'));
+});
+
 
 // Route to display Gmail processing page
 app.get('/process-gmail', authenticateGmail, (req, res) => {
@@ -1164,6 +1147,7 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, async (req, res)
 
   try {
     const auth = req.oAuth2Client;
+    const idNumber = req.body.idNumber || ''; // Get ID number from the form
     const { startDate, endDate } = req.body;
     const customPrefix = 'סיכום הוצאות'; // Default value
 
@@ -1212,7 +1196,7 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, async (req, res)
       progressEmitter.emit('progress', [{ status: `Processing ${fileName}...`, progress: progressPercent }]);
 
       // Process the file
-      const expenseData = await processFile(filePath, serviceAccountAuth);
+      const expenseData = await processFile(filePath, serviceAccountAuth, idNumber);
 
       if (expenseData) {
         expenses.push(expenseData);
