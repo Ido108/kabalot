@@ -393,25 +393,42 @@ async function parseReceiptWithDocumentAI(filePath, serviceAccountAuth) {
     }
 
     // If date is not extracted, use today's date
+// Existing code...
     if (!invoiceDate) {
       invoiceDate = formatDate(new Date());
       result['Date'] = invoiceDate;
     } else {
       // Parse and format the date to 'YYYY-MM-DD'
       try {
-        // Try parsing common date formats
-        const parsedDate = parse(invoiceDate, 'yyyy-MM-dd', new Date());
-        if (isNaN(parsedDate)) {
-          // Try another format
-          const altParsedDate = parse(invoiceDate, 'MM/dd/yyyy', new Date());
-          if (isNaN(altParsedDate)) {
-            // If parsing fails, use today's date
-            invoiceDate = formatDate(new Date());
-            result['Date'] = invoiceDate;
-          } else {
-            invoiceDate = formatDate(altParsedDate);
-            result['Date'] = invoiceDate;
+        console.log('Attempting to parse invoice date:', invoiceDate);
+
+        // Array of date formats to try
+        const dateFormats = [
+          'yyyy-MM-dd',
+          'MM/dd/yyyy',
+          'dd/MM/yyyy',
+          'dd-MM-yyyy',
+          'MM-dd-yyyy',
+          'yyyy/MM/dd',
+          'dd.MM.yyyy',
+          'yyyy.MM.dd',
+          'MMMM dd, yyyy', // e.g., October 04, 2024
+          'MMM dd, yyyy',   // e.g., Oct 04, 2024
+        ];
+
+        let parsedDate;
+        for (const dateFormat of dateFormats) {
+          parsedDate = parse(invoiceDate, dateFormat, new Date());
+          if (!isNaN(parsedDate)) {
+            console.log(`Date parsed successfully with format "${dateFormat}":`, parsedDate);
+            break;
           }
+        }
+        if (isNaN(parsedDate)) {
+          // If parsing fails, use today's date
+          console.error('Failed to parse invoice date:', invoiceDate);
+          invoiceDate = formatDate(new Date());
+          result['Date'] = invoiceDate;
         } else {
           invoiceDate = formatDate(parsedDate);
           result['Date'] = invoiceDate;
@@ -422,6 +439,7 @@ async function parseReceiptWithDocumentAI(filePath, serviceAccountAuth) {
         result['Date'] = invoiceDate;
       }
     }
+
 
     let exchangeRate;
     if (hasUSD) {
