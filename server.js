@@ -123,7 +123,9 @@ function scheduleFolderDeletion(folderPath, delayMs) {
       });
   }, delayMs);
 }
-
+function getQueuePosition(queue, sessionId) {
+  return queue.findIndex(task => task.sessionId === sessionId) + 1;
+}
 /**
  * Format Date as YYYY-MM-DD
  */
@@ -1000,7 +1002,6 @@ app.get('/', (req, res) => {
 // Handle File Upload and Processing with Progress Logging
 // Handle File Upload and Processing with Progress Logging
 app.post('/upload', upload, async (req, res) => {
-  // Generate or retrieve the session ID
   if (!req.session.sessionId) {
     req.session.sessionId = uuidv4();
   }
@@ -1008,8 +1009,8 @@ app.post('/upload', upload, async (req, res) => {
   const userFolder = path.join(INPUT_FOLDER, sessionId);
   fs.ensureDirSync(userFolder);
 
-  const progressEmitter = new events.EventEmitter();
-  req.session.progressEmitter = progressEmitter;
+  const progressEmitter = new EventEmitter();
+  progressEmitters.set(sessionId, progressEmitter);
 
   // Send a response to the client indicating the session ID
   res.json({ sessionId });
@@ -1030,9 +1031,9 @@ app.post('/upload', upload, async (req, res) => {
 
   // Inform the user if they are in a queue
   if (isProcessing) {
-    const queuePosition = taskQueue.length;
+    const queuePosition = getQueuePosition(taskQueue, sessionId);
     progressEmitter.emit('progress', [
-      { status: `Your task is in a queue at position ${queuePosition}. It will start processing shortly.`, progress: 0 },
+      { status: `Your task is in a queue at position ${queuePosition}. It will start processing shortly.`, progress: 0, queuePosition },
     ]);
   } else {
     // Start processing immediately if no other tasks are running
@@ -1443,9 +1444,9 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, (req, res) => {
 
   // Inform the user if they are in a queue
   if (isGmailProcessing) {
-    const queuePosition = gmailTaskQueue.length;
+    const queuePosition = getQueuePosition(gmailTaskQueue, sessionId);
     progressEmitter.emit('progress', [
-      { status: `Your task is in a queue at position ${queuePosition}. It will start processing shortly.`, progress: 0 },
+      { status: `Your task is in a queue at position ${queuePosition}. It will start processing shortly.`, progress: 0, queuePosition },
     ]);
   } else {
     // Start processing immediately if no other tasks are running
