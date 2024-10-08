@@ -140,6 +140,12 @@
     function updateGmailProgressLog(progressData) {
       gmailProgressLog.innerHTML = '';
       progressData.forEach((item) => {
+        let downloadLinksHtml = '';
+        if (item.downloadLinks && item.downloadLinks.length > 0) {
+          item.downloadLinks.forEach((link) => {
+            downloadLinksHtml += `<a href="${link.url}" class="btn btn-success mt-3">${link.label}</a> `;
+          });
+        }
         gmailProgressLog.innerHTML += `
           <div class="progress-item">
             <p>${item.status}</p>
@@ -153,7 +159,7 @@
                 aria-valuemax="100"
               >${item.progress}%</div>
             </div>
-            ${item.downloadLink ? `<a href="${item.downloadLink}" class="btn btn-success mt-3">הורד קובץ אקסל</a>` : ''}
+            ${downloadLinksHtml}
           </div>
         `;
       });

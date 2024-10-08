@@ -190,9 +190,15 @@
     function updateProgressLog(progressData) {
       progressLog.innerHTML = '';
       progressData.forEach((item) => {
+        let downloadLinksHtml = '';
+        if (item.downloadLinks && item.downloadLinks.length > 0) {
+          item.downloadLinks.forEach((link) => {
+            downloadLinksHtml += `<a href="${link.url}" class="btn btn-success mt-3">${link.label}</a> `;
+          });
+        }
         progressLog.innerHTML += `
           <div class="progress-item">
-            <p>${item.fileName}: ${item.status}</p>
+            <p>${item.fileName || ''}: ${item.status}</p>
             <div class="progress">
               <div
                 class="progress-bar"
@@ -203,7 +209,7 @@
                 aria-valuemax="100"
               >${item.progress}%</div>
             </div>
-            ${item.downloadLink ? `<a href="${item.downloadLink}" class="btn btn-success mt-3">הורד קובץ אקסל</a>` : ''}
+            ${downloadLinksHtml}
           </div>
         `;
       });
