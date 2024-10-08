@@ -74,6 +74,26 @@ h3 {
   border-color: #dee2e6 #dee2e6 #ffffff;
 }
 
+/* *** New Styles for the Gmail Tab Button *** */
+/* Place the new CSS code here */
+
+/* Custom styles for the Gmail tab button */
+.nav-tabs .nav-link.gmail-tab-special {
+  background-color: gold;
+  color: black;
+  font-weight: bold;
+}
+
+.nav-tabs .nav-link.gmail-tab-special.active {
+  background-color: goldenrod;
+  color: white;
+}
+
+.nav-tabs .nav-link.gmail-tab-special:hover {
+  background-color: darkgoldenrod;
+  color: white;
+}
+
 /* Tab Content */
 .tab-content {
   background-color: #ffffff;
