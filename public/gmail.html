@@ -130,10 +130,9 @@
       })
         .then((response) => response.json())
         .then((data) => {
-          const sessionId = data.sessionId;
 
           // Start listening to progress events
-          const eventSource = new EventSource(`/gmail-progress/${sessionId}`);
+          const eventSource = new EventSource('/gmail-progress');
           eventSource.onmessage = function (e) {
             const progressData = JSON.parse(e.data);
             updateGmailProgressLog(progressData);

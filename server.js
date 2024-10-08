@@ -38,7 +38,8 @@ app.use(
     },
   })
 );
-
+const taskQueue = [];
+let isProcessing = false;
 // Configuration Constants
 const date = new Date();
 const folderName = `${date.getFullYear()}-${(date.getMonth() + 1)
@@ -103,6 +104,22 @@ function authenticateServiceAccount() {
   );
 
   return jwtClient;
+}
+/**
+ * Schedule deletion of a folder after a specified delay
+ * @param {string} folderPath - Path to the folder to delete
+ * @param {number} delayMs - Delay in milliseconds before deletion
+ */
+function scheduleFolderDeletion(folderPath, delayMs) {
+  setTimeout(() => {
+    fs.remove(folderPath)
+      .then(() => {
+        console.log(`Deleted folder: ${folderPath}`);
+      })
+      .catch((err) => {
+        console.error(`Error deleting folder ${folderPath}:`, err);
+      });
+  }, delayMs);
 }
 
 /**
@@ -217,6 +234,148 @@ async function unlockPdf(filePath, password) {
       console.error('Error in unlockPdf:', error.message);
     }
     return null;
+  }
+}
+async function processNextTask() {
+  if (taskQueue.length === 0) {
+    isProcessing = false;
+    return;
+  }
+
+  isProcessing = true;
+  const task = taskQueue.shift(); // Get the next task
+  const {
+    sessionId,
+    userFolder,
+    files,
+    name,
+    idNumber,
+    progressEmitter,
+    req,
+  } = task;
+
+  try {
+    // Notify user that processing has started
+    progressEmitter.emit('progress', [
+      { status: 'Processing started.', progress: 0 },
+    ]);
+
+    if (!files || files.length === 0) {
+      progressEmitter.emit('progress', [{ status: 'No files uploaded.', progress: 100 }]);
+      return;
+    }
+
+    console.log(`Processing ${files.length} file(s) for session ${sessionId}...`);
+
+    const progressData = files.map((filePath) => ({
+      fileName: path.basename(filePath),
+      status: 'Pending',
+      progress: 0,
+    }));
+
+    // Function to emit progress updates
+    const emitProgress = () => {
+      progressEmitter.emit('progress', progressData);
+    };
+
+    emitProgress(); // Initial emit
+
+    const expenses = [];
+    const serviceAccountAuth = authenticateServiceAccount();
+    await serviceAccountAuth.authorize();
+
+    for (let i = 0; i < files.length; i++) {
+      const filePath = files[i];
+
+      // Update status to 'Processing'
+      progressData[i].status = 'Processing';
+      progressData[i].progress = 25;
+      emitProgress();
+
+      // Process the file
+      const expenseData = await processFile(filePath, serviceAccountAuth, idNumber);
+
+      if (expenseData) {
+        expenses.push(expenseData);
+
+        // Update progress data with expense information
+        progressData[i].status = 'Completed';
+        progressData[i].progress = 100;
+        progressData[i].businessName = expenseData.BusinessName || 'N/A';
+        progressData[i].date = expenseData.Date || 'N/A';
+        progressData[i].totalPrice = expenseData.TotalPrice
+          ? parseFloat(expenseData.TotalPrice).toFixed(2)
+          : 'N/A';
+      } else {
+        progressData[i].status = 'Failed';
+        progressData[i].progress = 100;
+      }
+
+      // Round progress percentages
+      progressData[i].progress = Math.round(progressData[i].progress);
+
+      emitProgress();
+    }
+
+    // Create Expense Excel File
+    if (expenses.length > 0) {
+      const startDate = formatDate(new Date());
+      const endDate = formatDate(new Date());
+
+      const excelPath = await createExpenseExcel(
+        expenses,
+        userFolder,
+        'סיכום הוצאות', // Default file prefix
+        startDate,
+        endDate,
+        name // Optional name
+      );
+      console.log('Expense summary Excel file created.');
+
+      // Create ZIP file of processed files
+      const zipFileName = `processed_files_${Date.now()}.zip`;
+      const zipFilePath = await createZipFile(files, userFolder, zipFileName);
+      console.log('Processed files ZIP created.');
+
+      // Provide download links
+      const excelFileName = encodeURIComponent(path.basename(excelPath));
+      const excelUrl = `/download/${excelFileName}`;
+
+      const zipFileNameEncoded = encodeURIComponent(path.basename(zipFilePath));
+      const zipUrl = `/download/${zipFileNameEncoded}`;
+
+      progressEmitter.emit('progress', [
+        ...progressData,
+        {
+          status: 'Processing complete. Download the files below. Files will be available for 1 hour.',
+          progress: 100,
+          downloadLinks: [
+            { label: 'הורד קובץ אקסל', url: excelUrl },
+            { label: 'הורד קבצים מעובדים (ZIP)', url: zipUrl },
+          ],
+        },
+      ]);
+    } else {
+      progressEmitter.emit('progress', [
+        ...progressData,
+        { status: 'No expenses extracted.', progress: 100 },
+      ]);
+    }
+  } catch (processingError) {
+    console.error('Processing Error:', processingError.message);
+    progressEmitter.emit('progress', [
+      { status: `Processing Error: ${processingError.message}`, progress: 100 },
+    ]);
+  } finally {
+    // Schedule deletion after 1 hour (3600000 milliseconds)
+    scheduleFolderDeletion(userFolder, 3600000); // 1 hour delay
+
+    // Clean up progressEmitter
+    req.session.progressEmitter = null;
+
+    // Process the next task
+    isProcessing = false;
+    processNextTask();
   }
 }
 
@@ -837,6 +996,7 @@ app.get('/', (req, res) => {
 });
 
 // Handle File Upload and Processing with Progress Logging
+// Handle File Upload and Processing with Progress Logging
 app.post('/upload', upload, async (req, res) => {
   // Generate or retrieve the session ID
   if (!req.session.sessionId) {
@@ -852,123 +1012,32 @@ app.post('/upload', upload, async (req, res) => {
   // Send a response to the client indicating the session ID
   res.json({ sessionId });
 
-  if (!req.files || req.files.length === 0) {
-    progressEmitter.emit('progress', [{ status: 'No files uploaded', progress: 0 }]);
-    return;
-  }
+  // Create a task object
+  const task = {
+    sessionId,
+    userFolder,
+    files: req.files ? req.files.map((file) => file.path) : [],
+    name: req.body.name || '',
+    idNumber: req.body.idNumber || '',
+    progressEmitter,
+    req,
+  };
 
-  console.log(`Received ${req.files.length} file(s) from session ${sessionId}. Starting processing...`);
+  // Add task to the queue
+  taskQueue.push(task);
 
-  try {
-    const files = req.files.map((file) => file.path);
-    const totalFiles = files.length;
-    const filePrefix = 'סיכום הוצאות'; // Default file prefix
-    const name = req.body.name || ''; // Optional name input
-    const idNumber = req.body.idNumber || ''; // Get ID number from the form
-
-    const progressData = files.map((filePath) => ({
-      fileName: path.basename(filePath),
-      status: 'Pending',
-      progress: 0,
-    }));
-
-    // Function to emit progress updates
-    const emitProgress = () => {
-      progressEmitter.emit('progress', progressData);
-    };
-
-    emitProgress(); // Initial emit
-
-    const expenses = [];
-    const serviceAccountAuth = authenticateServiceAccount();
-    await serviceAccountAuth.authorize();
-
-    for (let i = 0; i < files.length; i++) {
-      const filePath = files[i];
-      const fileName = path.basename(filePath);
-
-      // Update status to 'Processing'
-      progressData[i].status = 'Processing';
-      progressData[i].progress = 25;
-      emitProgress();
-
-      // Process the file
-      const expenseData = await processFile(filePath, serviceAccountAuth, idNumber);
-
-      if (expenseData) {
-        expenses.push(expenseData);
-
-        // Update progress data with expense information
-        progressData[i].status = 'Completed';
-        progressData[i].progress = 100;
-        progressData[i].businessName = expenseData.BusinessName || 'N/A';
-        progressData[i].date = expenseData.Date || 'N/A';
-        progressData[i].totalPrice = expenseData.TotalPrice
-          ? parseFloat(expenseData.TotalPrice).toFixed(2)
-          : 'N/A';
-      } else {
-        progressData[i].status = 'Failed';
-        progressData[i].progress = 100;
-      }
-
-      // Round progress percentages
-      progressData[i].progress = Math.round(progressData[i].progress);
-
-      emitProgress();
-    }
-
-    // Create Expense Excel File
-    if (expenses.length > 0) {
-      const startDate = formatDate(new Date());
-      const endDate = formatDate(new Date());
-
-      const excelPath = await createExpenseExcel(
-        expenses,
-        userFolder,
-        filePrefix,
-        startDate,
-        endDate,
-        name // Optional name
-      );
-      console.log('Expense summary Excel file created.');
-
-      // Create ZIP file of processed files
-      const zipFileName = `processed_files_${Date.now()}.zip`;
-      const zipFilePath = await createZipFile(files, userFolder, zipFileName);
-      console.log('Processed files ZIP created.');
-
-      // Provide download links
-      const excelFileName = encodeURIComponent(path.basename(excelPath));
-      const excelUrl = `/download/${excelFileName}`;
-
-      const zipFileNameEncoded = encodeURIComponent(path.basename(zipFilePath));
-      const zipUrl = `/download/${zipFileNameEncoded}`;
-
-      progressEmitter.emit('progress', [
-        ...progressData,
-        {
-          status: 'Processing complete. Download the files below.',
-          progress: 100,
-          downloadLinks: [
-            { label: 'הורד קובץ אקסל', url: excelUrl },
-            { label: 'הורד קבצים מעובדים (ZIP)', url: zipUrl },
-          ],
-        },
-      ]);
-    } else {
-      progressEmitter.emit('progress', [
-        ...progressData,
-        { status: 'No expenses extracted.', progress: 100 },
-      ]);
-    }
-  } catch (processingError) {
-    console.error('Processing Error:', processingError.message);
+  // Inform the user if they are in a queue
+  if (isProcessing) {
+    const queuePosition = taskQueue.length;
     progressEmitter.emit('progress', [
-      ...progressData,
-      { status: `Processing Error: ${processingError.message}`, progress: 100 },
+      { status: `Your task is in a queue at position ${queuePosition}. It will start processing shortly.`, progress: 0 },
     ]);
+  } else {
+    // Start processing immediately if no other tasks are running
+    processNextTask();
   }
 });
+
 
 
 // Endpoint for Upload Progress
@@ -998,6 +1067,7 @@ app.get('/upload-progress', (req, res) => {
 
 
 // Download Route - Serve the generated files
+// Download Route - Serve the generated files
 app.get('/download/:filename', (req, res) => {
   const { filename } = req.params;
   const decodedFilename = decodeURIComponent(filename);
@@ -1012,6 +1082,9 @@ app.get('/download/:filename', (req, res) => {
 
   // Search for the file in userFolder and its subfolders
   const findFile = (dir) => {
+    if (!fs.existsSync(dir)) {
+      return null;
+    }
     const files = fs.readdirSync(dir);
     for (const file of files) {
       const filePath = path.join(dir, file);
@@ -1046,9 +1119,151 @@ app.get('/download/:filename', (req, res) => {
       }
     });
   } else {
-    res.status(404).send('File not found.');
+    res.status(404).send('File not found. The file may have expired and been deleted.');
   }
 });
+
+async function processNextGmailTask() {
+  if (gmailTaskQueue.length === 0) {
+    isGmailProcessing = false;
+    return;
+  }
+
+  isGmailProcessing = true;
+  const task = gmailTaskQueue.shift(); // Get the next task
+  const {
+    sessionId,
+    userFolder,
+    startDate,
+    endDate,
+    idNumber,
+    progressEmitter,
+    req,
+  } = task;
+
+  try {
+    // Notify user that processing has started
+    progressEmitter.emit('progress', [
+      { status: 'Processing started.', progress: 0 },
+    ]);
+
+    const auth = req.oAuth2Client;
+    const customPrefix = 'סיכום הוצאות';
+
+    console.log('Processing Gmail attachments from', startDate, 'to', endDate);
+
+    const startDateObj = new Date(startDate);
+    const endDateObj = new Date(endDate);
+    endDateObj.setHours(23, 59, 59, 999);
+
+    progressEmitter.emit('progress', [{ status: 'Downloading Gmail attachments...', progress: 10 }]);
+
+    // Download Gmail attachments into userFolder
+    await downloadGmailAttachments(auth, startDateObj, endDateObj, userFolder);
+    console.log('Attachments downloaded to:', userFolder);
+
+    // Get all files from userFolder
+    let files = fs.readdirSync(userFolder).map((file) => path.join(userFolder, file));
+    console.log('Files found:', files);
+
+    if (files.length === 0) {
+      progressEmitter.emit('progress', [{ status: 'No attachments found.', progress: 100 }]);
+      return;
+    }
+
+    const progressData = files.map((filePath) => ({
+      fileName: path.basename(filePath),
+      status: 'Pending',
+      progress: 0,
+    }));
+
+    const expenses = [];
+    const serviceAccountAuth = authenticateServiceAccount();
+    await serviceAccountAuth.authorize();
+
+    for (let i = 0; i < files.length; i++) {
+      const filePath = files[i];
+
+      // Update status to 'Processing'
+      progressData[i].status = 'Processing';
+      progressData[i].progress = 25;
+      progressEmitter.emit('progress', progressData);
+
+      // Process the file
+      const expenseData = await processFile(filePath, serviceAccountAuth, idNumber);
+
+      if (expenseData) {
+        expenses.push(expenseData);
+
+        // Update progress data with expense information
+        progressData[i].status = 'Completed';
+        progressData[i].progress = 100;
+        progressData[i].businessName = expenseData.BusinessName || 'N/A';
+        progressData[i].date = expenseData.Date || 'N/A';
+        progressData[i].totalPrice = expenseData.TotalPrice
+          ? parseFloat(expenseData.TotalPrice).toFixed(2)
+          : 'N/A';
+      } else {
+        progressData[i].status = 'Failed';
+        progressData[i].progress = 100;
+      }
+
+      // Round progress percentages
+      progressData[i].progress = Math.round(progressData[i].progress);
+
+      progressEmitter.emit('progress', progressData);
+    }
+
+    progressEmitter.emit('progress', [{ status: 'Creating Excel file...', progress: 80 }]);
+
+    const excelPath = await createExpenseExcel(
+      expenses,
+      userFolder,
+      customPrefix,
+      startDate,
+      endDate
+    );
+    console.log('Expenses extracted:', expenses.length);
+    console.log('Excel file created at:', excelPath);
+
+    // Create ZIP file of processed files
+    const zipFileName = `processed_files_${Date.now()}.zip`;
+    const zipFilePath = await createZipFile(files, userFolder, zipFileName);
+    console.log('Processed files ZIP created.');
+
+    // Provide download links
+    const excelFileName = encodeURIComponent(path.basename(excelPath));
+    const excelUrl = `/download/${excelFileName}`;
+
+    const zipFileNameEncoded = encodeURIComponent(path.basename(zipFilePath));
+    const zipUrl = `/download/${zipFileNameEncoded}`;
+
+    progressEmitter.emit('progress', [
+      ...progressData,
+      {
+        status: 'Processing complete. Download the files below. Files will be available for 1 hour.',
+        progress: 100,
+        downloadLinks: [
+          { label: 'הורד קובץ אקסל', url: excelUrl },
+          { label: 'הורד קבצים מעובדים (ZIP)', url: zipUrl },
+        ],
+      },
+    ]);
+
+    // Schedule deletion after 1 hour (3600000 milliseconds)
+    scheduleFolderDeletion(userFolder, 3600000); // 1 hour delay
+
+    // Clean up progressEmitter
+    req.session.gmailProgressEmitter = null;
+  } catch (error) {
+    console.error('Error processing Gmail attachments:', error);
+    progressEmitter.emit('progress', [{ status: `Error: ${error.message}`, progress: 100 }]);
+  } finally {
+    // Process the next task
+    isGmailProcessing = false;
+    processNextGmailTask();
+  }
+}
 
 
 // Gmail Authentication and Processing Routes
@@ -1190,7 +1405,10 @@ const additionalUpload = multer({
 }).array('additionalFiles', 100);
 
 
-app.post('/process-gmail', authenticateGmail, additionalUpload, async (req, res) => {
+const gmailTaskQueue = [];
+let isGmailProcessing = false;
+
+app.post('/process-gmail', authenticateGmail, additionalUpload, (req, res) => {
   // Generate or retrieve the session ID
   if (!req.session.sessionId) {
     req.session.sessionId = uuidv4();
@@ -1202,119 +1420,35 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, async (req, res)
   const progressEmitter = new events.EventEmitter();
   req.session.gmailProgressEmitter = progressEmitter;
 
-  // Send a response to the client indicating the session ID
-  res.json({ sessionId });
+  // Create a task object
+  const task = {
+    sessionId,
+    userFolder,
+    startDate: req.body.startDate,
+    endDate: req.body.endDate,
+    idNumber: req.body.idNumber || '',
+    progressEmitter,
+    req,
+  };
 
-  try {
-    const auth = req.oAuth2Client;
-    const idNumber = req.body.idNumber || ''; // Get ID number from the form
-    const { startDate, endDate } = req.body;
-    const customPrefix = 'סיכום הוצאות'; // Default value
+  // Add task to the Gmail queue
+  gmailTaskQueue.push(task);
 
-    console.log('Processing Gmail attachments from', startDate, 'to', endDate);
-
-    const startDateObj = new Date(startDate);
-    const endDateObj = new Date(endDate);
-    endDateObj.setHours(23, 59, 59, 999); // Set to end of day
-
-    progressEmitter.emit('progress', [{ status: 'Downloading Gmail attachments...', progress: 10 }]);
-
-    // Download Gmail attachments into userFolder
-    await downloadGmailAttachments(auth, startDateObj, endDateObj, userFolder);
-    console.log('Attachments downloaded to:', userFolder);
-
-    // Get all files from userFolder
-    let files = fs.readdirSync(userFolder).map((file) => path.join(userFolder, file));
-    console.log('Files found:', files);
-
-    if (files.length === 0) {
-      progressEmitter.emit('progress', [{ status: 'No attachments found.', progress: 100 }]);
-      return;
-    }
-
-    const progressData = files.map((filePath) => ({
-      fileName: path.basename(filePath),
-      status: 'Pending',
-      progress: 0,
-    }));
-
-    const expenses = [];
-    const serviceAccountAuth = authenticateServiceAccount();
-    await serviceAccountAuth.authorize();
-
-    for (let i = 0; i < files.length; i++) {
-      const filePath = files[i];
-      const fileName = path.basename(filePath);
-
-      // Update status to 'Processing'
-      progressData[i].status = 'Processing';
-      progressData[i].progress = 25;
-      progressEmitter.emit('progress', progressData);
-
-      // Process the file
-      const expenseData = await processFile(filePath, serviceAccountAuth, idNumber);
-
-      if (expenseData) {
-        expenses.push(expenseData);
-
-        // Update progress data with expense information
-        progressData[i].status = 'Completed';
-        progressData[i].progress = 100;
-        progressData[i].businessName = expenseData.BusinessName || 'N/A';
-        progressData[i].date = expenseData.Date || 'N/A';
-        progressData[i].totalPrice = expenseData.TotalPrice
-          ? parseFloat(expenseData.TotalPrice).toFixed(2)
-          : 'N/A';
-      } else {
-        progressData[i].status = 'Failed';
-        progressData[i].progress = 100;
-      }
-
-      // Round progress percentages
-      progressData[i].progress = Math.round(progressData[i].progress);
-
-      progressEmitter.emit('progress', progressData);
-    }
-
-    progressEmitter.emit('progress', [{ status: 'Creating Excel file...', progress: 80 }]);
-
-    const excelPath = await createExpenseExcel(
-      expenses,
-      userFolder,
-      customPrefix,
-      startDate,
-      endDate
-    );
-    console.log('Expenses extracted:', expenses.length);
-    console.log('Excel file created at:', excelPath);
-
-    // Create ZIP file of processed files
-    const zipFileName = `processed_files_${Date.now()}.zip`;
-    const zipFilePath = await createZipFile(files, userFolder, zipFileName);
-    console.log('Processed files ZIP created.');
-
-    // Provide download links
-    const excelFileName = encodeURIComponent(path.basename(excelPath));
-    const excelUrl = `/download/${excelFileName}`;
-
-    const zipFileNameEncoded = encodeURIComponent(path.basename(zipFilePath));
-    const zipUrl = `/download/${zipFileNameEncoded}`;
-
+  // Inform the user if they are in a queue
+  if (isGmailProcessing) {
+    const queuePosition = gmailTaskQueue.length;
     progressEmitter.emit('progress', [
-      {
-        status: 'Processing complete. Download the files below.',
-        progress: 100,
-        downloadLinks: [
-          { label: 'הורד קובץ אקסל', url: excelUrl },
-          { label: 'הורד קבצים מעובדים (ZIP)', url: zipUrl },
-        ],
-      },
+      { status: `Your task is in a queue at position ${queuePosition}. It will start processing shortly.`, progress: 0 },
     ]);
-  } catch (error) {
-    console.error('Error processing Gmail attachments:', error);
-    progressEmitter.emit('progress', [{ status: `Error: ${error.message}`, progress: 100 }]);
+  } else {
+    // Start processing immediately if no other tasks are running
+    processNextGmailTask();
   }
+
+  // Send response to the client indicating the session ID
+  res.json({ sessionId });
 });
+
 
 
 
