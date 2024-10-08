@@ -374,47 +374,10 @@
         });
     }
 
-    function startGmailProcessing() {
-      const formData = new FormData(gmailForm);
-      const additionalFiles = additionalFilesInput.files;
 
-      for (const file of additionalFiles) {
-        formData.append('additionalFiles', file);
-      }
-
-      // Disable the Gmail button and change its text
-      gmailButton.disabled = true;
-      gmailButton.textContent = 'עיבוד...';
-
-      // Show immediate message in the progress log
-      gmailProgressLog.innerHTML = '<p>עיבוד התחיל, אנא המתן...</p>';
-
-      fetch('/process-gmail', {
-        method: 'POST',
-        body: formData,
-      })
-        .then((response) => response.json())
-        .then((data) => {
-
-          // Start listening to progress events
-          const eventSource = new EventSource('/gmail-progress');
-          eventSource.onmessage = function (e) {
-            const progressData = JSON.parse(e.data);
-            updateGmailProgressLog(progressData);
-          };
-
-          eventSource.onerror = function () {
-            console.error('EventSource failed.');
-            eventSource.close();
-          };
-        })
-        .catch((error) => {
-          console.error('Gmail processing failed:', error);
-        });
-    }
 
     function updateGmailProgressLog(progressData) {
-      progressLog.innerHTML = '';
+      gmailProgressLog.innerHTML = '';
       let processingComplete = false;
       progressData.forEach((item) => {
         let statusHtml = `<p>${item.fileName || ''}: ${item.status}</p>`;

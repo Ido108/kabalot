@@ -155,7 +155,7 @@
     }
 
     function updateGmailProgressLog(progressData) {
-      progressLog.innerHTML = '';
+      gmailProgressLog.innerHTML = '';
       let processingComplete = false;
       progressData.forEach((item) => {
         let statusHtml = `<p>${item.fileName || ''}: ${item.status}</p>`;
