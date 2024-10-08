@@ -1260,6 +1260,12 @@ async function processNextGmailTask() {
     console.error('Error processing Gmail attachments:', error);
     progressEmitter.emit('progress', [{ status: `Error: ${error.message}`, progress: 100 }]);
   } finally {
+    // Schedule deletion after 1 hour (3600000 milliseconds)
+    scheduleFolderDeletion(userFolder, 3600000); // 1 hour delay
+  
+    // Clean up progressEmitter
+    progressEmitters.delete(sessionId);
+  
     // Process the next task
     isGmailProcessing = false;
     processNextGmailTask();
@@ -1410,7 +1416,6 @@ const gmailTaskQueue = [];
 let isGmailProcessing = false;
 
 app.post('/process-gmail', authenticateGmail, additionalUpload, (req, res) => {
-  // Generate or retrieve the session ID
   if (!req.session.sessionId) {
     req.session.sessionId = uuidv4();
   }
@@ -1418,8 +1423,8 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, (req, res) => {
   const userFolder = path.join(INPUT_FOLDER, sessionId);
   fs.ensureDirSync(userFolder);
 
-  const progressEmitter = new events.EventEmitter();
-  req.session.gmailProgressEmitter = progressEmitter;
+  const progressEmitter = new EventEmitter();
+  progressEmitters.set(sessionId, progressEmitter);
 
   // Create a task object
   const task = {
@@ -1455,7 +1460,8 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, (req, res) => {
 
 // Endpoint for Gmail Progress
 app.get('/gmail-progress', (req, res) => {
-  const progressEmitter = req.session.gmailProgressEmitter;
+  const sessionId = req.session.sessionId;
+  const progressEmitter = progressEmitters.get(sessionId);
 
   if (!progressEmitter) {
     res.status(404).end();
@@ -1474,6 +1480,7 @@ app.get('/gmail-progress', (req, res) => {
 
   req.on('close', () => {
     progressEmitter.removeListener('progress', onProgress);
+    progressEmitters.delete(sessionId);
   });
 });
 
