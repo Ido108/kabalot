@@ -74,9 +74,6 @@ h3 {
   border-color: #dee2e6 #dee2e6 #ffffff;
 }
 
-/* *** New Styles for the Gmail Tab Button *** */
-/* Place the new CSS code here */
-
 /* Custom styles for the Gmail tab button */
 .nav-tabs .nav-link.gmail-tab-special {
   background-color: gold;
@@ -109,29 +106,41 @@ h3 {
   max-height: 300px;
   overflow-y: auto;
   margin-top: 20px;
+  padding-bottom: 20px;
 }
 
 .progress-item {
-  margin-bottom: 20px;
+  margin-bottom: 10px;
 }
 
 .progress-item p {
-  margin-bottom: 10px;
-  font-weight: bold;
+  margin-bottom: 5px;
+  font-weight: normal;
 }
 
 .progress {
-  height: 1.5rem;
+  height: 1rem;
   background-color: #e9ecef;
-  border-radius: 0.75rem;
+  border-radius: 0.5rem;
 }
 
 .progress-bar {
   background-color: #007bff;
   font-weight: bold;
-  font-size: 0.9rem;
-  line-height: 1.5rem;
+  font-size: 0.8rem;
+  line-height: 1rem;
   transition: width 0.6s ease;
+}
+
+/* Download Buttons */
+.download-buttons {
+  margin-top: 20px;
+  text-align: center;
+}
+
+.download-buttons .btn {
+  margin: 5px;
+  font-size: 1.1rem;
 }
 
 /* Footer */
@@ -155,12 +164,31 @@ h3 {
     padding: 0.6rem;
   }
 
-  .nav-tabs .nav-link {
-    font-size: 1rem;
+  h3 {
+    font-size: 1.2rem;
+    text-align: center;
+  }
+
+  .navbar-brand {
+    font-size: 1.2rem;
   }
 
   .container {
     padding: 0 15px;
+  }
+
+  .progress-bar {
+    font-size: 0.7rem;
+  }
+
+  #progress-log,
+  #gmail-progress-log {
+    max-height: 200px;
+  }
+
+  .download-buttons .btn {
+    font-size: 1rem;
+    margin: 3px;
   }
 }
 

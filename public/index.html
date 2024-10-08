@@ -1,5 +1,3 @@
-  <!-- index.html -->
-
 <!DOCTYPE html>
 <html lang="he">
 <head>
@@ -231,12 +229,17 @@
         })
         .catch((error) => {
           console.error('Upload failed:', error);
+          // Re-enable the upload button in case of error
+          uploadButton.disabled = false;
+          uploadButton.textContent = 'התחל עיבוד';
         });
     }
 
     function updateProgressLog(progressData) {
       progressLog.innerHTML = '';
       let processingComplete = false;
+      let downloadButtonsHtml = ''; // Collect download buttons here
+
       progressData.forEach((item) => {
         let statusHtml = `<p>${item.fileName || ''}: ${item.status}</p>`;
 
@@ -261,14 +264,6 @@
           `;
         }
 
-        let downloadLinksHtml = '';
-        if (item.downloadLinks && item.downloadLinks.length > 0) {
-          item.downloadLinks.forEach((link) => {
-            downloadLinksHtml += `<a href="${link.url}" class="btn btn-success mt-3">${link.label}</a> `;
-          });
-          downloadLinksHtml += `<a href="/" class="btn btn-primary mt-3">חזור לדף הראשי</a>`;
-        }
-
         let additionalInfo = '';
         if (item.status === 'Completed') {
           additionalInfo = `
@@ -278,33 +273,45 @@
           `;
         }
 
+        // Collect download buttons if present
+        if (item.downloadLinks && item.downloadLinks.length > 0) {
+          downloadButtonsHtml = `<div class="download-buttons">`;
+          item.downloadLinks.forEach((link) => {
+            downloadButtonsHtml += `<a href="${link.url}" class="btn btn-success mt-3">${link.label}</a>`;
+          });
+          downloadButtonsHtml += `<a href="/" class="btn btn-primary mt-3">חזור לדף הראשי</a>`;
+          downloadButtonsHtml += `</div>`;
+          processingComplete = true;
+        }
+
         progressLog.innerHTML += `
           <div class="progress-item">
             ${statusHtml}
             ${progressHtml}
             ${additionalInfo}
-            ${downloadLinksHtml}
           </div>
         `;
-
-        if (item.progress === 100 && (item.status.includes('Processing complete') || item.downloadLinks)) {
-          processingComplete = true;
-        }
       });
 
+      // If processing is complete, show download buttons at the top
       if (processingComplete) {
         // Re-enable the upload button
         uploadButton.disabled = false;
         uploadButton.textContent = 'התחל עיבוד';
+
+        progressLog.innerHTML = downloadButtonsHtml + progressLog.innerHTML;
+
+        // Scroll to the download buttons
+        document.querySelector('.download-buttons').scrollIntoView({ behavior: 'smooth' });
       }
     }
-    // Gmail Login and Processing
+
     // Gmail Login and Processing
     const gmailLoginButton = document.getElementById('gmail-login-button');
     const gmailFormContainer = document.getElementById('gmail-form-container');
     const gmailButton = document.getElementById('gmail-button');
     const gmailForm = document.getElementById('gmail-form');
-    const gmailProgressLog = document.getElementById('gmail-progress-log'); // Correct variable
+    const gmailProgressLog = document.getElementById('gmail-progress-log');
     const additionalFilesInput = document.getElementById('additional-files');
     const gmailIdNumberInput = document.getElementById('idNumber');
 
@@ -378,11 +385,11 @@
         });
     }
 
-
-
     function updateGmailProgressLog(progressData) {
-      gmailProgressLog.innerHTML = ''; // Use gmailProgressLog instead of progressLog
+      gmailProgressLog.innerHTML = '';
       let processingComplete = false;
+      let downloadButtonsHtml = ''; // Collect download buttons here
+
       progressData.forEach((item) => {
         let statusHtml = `<p>${item.fileName || ''}: ${item.status}</p>`;
 
@@ -407,14 +414,6 @@
           `;
         }
 
-        let downloadLinksHtml = '';
-        if (item.downloadLinks && item.downloadLinks.length > 0) {
-          item.downloadLinks.forEach((link) => {
-            downloadLinksHtml += `<a href="${link.url}" class="btn btn-success mt-3">${link.label}</a> `;
-          });
-          downloadLinksHtml += `<a href="/" class="btn btn-primary mt-3">חזור לדף הראשי</a>`;
-        }
-
         let additionalInfo = '';
         if (item.status === 'Completed') {
           additionalInfo = `
@@ -424,26 +423,39 @@
           `;
         }
 
+        // Collect download buttons if present
+        if (item.downloadLinks && item.downloadLinks.length > 0) {
+          downloadButtonsHtml = `<div class="download-buttons">`;
+          item.downloadLinks.forEach((link) => {
+            downloadButtonsHtml += `<a href="${link.url}" class="btn btn-success mt-3">${link.label}</a>`;
+          });
+          downloadButtonsHtml += `<a href="/" class="btn btn-primary mt-3">חזור לדף הראשי</a>`;
+          downloadButtonsHtml += `</div>`;
+          processingComplete = true;
+        }
+
         gmailProgressLog.innerHTML += `
           <div class="progress-item">
             ${statusHtml}
             ${progressHtml}
             ${additionalInfo}
-            ${downloadLinksHtml}
           </div>
         `;
-
-        if (item.progress === 100 && (item.status.includes('Processing complete') || item.downloadLinks)) {
-          processingComplete = true;
-        }
       });
 
+      // If processing is complete, show download buttons at the top
       if (processingComplete) {
         // Re-enable the Gmail button
         gmailButton.disabled = false;
         gmailButton.textContent = 'התחל עיבוד';
+
+        gmailProgressLog.innerHTML = downloadButtonsHtml + gmailProgressLog.innerHTML;
+
+        // Scroll to the download buttons
+        document.querySelector('.download-buttons').scrollIntoView({ behavior: 'smooth' });
       }
     }
+
   </script>
 </body>
 </html>
