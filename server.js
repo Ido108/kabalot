@@ -14,6 +14,8 @@ const { google } = require('googleapis');
 const cors = require('cors');
 const Excel = require('exceljs');
 const { parse, format } = require('date-fns');
+const RedisStore = require('connect-redis')(session);
+const redisClient = require('redis').createClient();
 const session = require('express-session');
 const events = require('events'); // For progress events
 const archiver = require('archiver'); // For creating ZIP files
@@ -30,12 +32,11 @@ app.set('view engine', 'ejs');
 // Configure session middleware
 app.use(
   session({
-    secret: process.env.SESSION_SECRET || 'your_session_secret', // Replace with your own secret
+    store: new RedisStore({ client: redisClient }),
+    secret: process.env.SESSION_SECRET || 'your_session_secret',
     resave: false,
     saveUninitialized: true,
-    cookie: {
-      maxAge: 3600000, // Session expires after 1 hour (adjust as needed)
-    },
+    cookie: { maxAge: 3600000 },
   })
 );
 const taskQueue = [];
@@ -1410,6 +1411,9 @@ let isGmailProcessing = false;
 
 app.post('/process-gmail', authenticateGmail, additionalUpload, (req, res) => {
   // Generate or retrieve the session ID
+  const uniqueId = uuidv4();
+  progressEmitters[uniqueId] = progressEmitter;
+  res.json({ uniqueId });
   if (!req.session.sessionId) {
     req.session.sessionId = uuidv4();
   }
@@ -1453,8 +1457,9 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, (req, res) => {
 
 
 // Endpoint for Gmail Progress
-app.get('/gmail-progress', (req, res) => {
-  const progressEmitter = req.session.gmailProgressEmitter;
+app.get('/gmail-progress/:uniqueId', (req, res) => {
+  const { uniqueId } = req.params;
+  const progressEmitter = progressEmitters[uniqueId];
 
   if (!progressEmitter) {
     res.status(404).end();
