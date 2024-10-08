@@ -151,19 +151,38 @@
     function updateGmailProgressLog(progressData) {
       gmailProgressLog.innerHTML = '';
       progressData.forEach((item) => {
+        let statusHtml = `<p>${item.fileName || ''}: ${item.status}</p>`;
+        
+        // Add queue position information if available
+        if (item.queuePosition) {
+          statusHtml += `<p>Queue Position: ${item.queuePosition}</p>`;
+        }
+
+        let progressHtml = '';
+        if (item.progress !== undefined) {
+          const progressPercent = Math.round(item.progress);
+          progressHtml = `
+            <div class="progress">
+              <div
+                class="progress-bar"
+                role="progressbar"
+                style="width: ${progressPercent}%"
+                aria-valuenow="${progressPercent}"
+                aria-valuemin="0"
+                aria-valuemax="100"
+              >${progressPercent}%</div>
+            </div>
+          `;
+        }
+
         let downloadLinksHtml = '';
         if (item.downloadLinks && item.downloadLinks.length > 0) {
           item.downloadLinks.forEach((link) => {
             downloadLinksHtml += `<a href="${link.url}" class="btn btn-success mt-3">${link.label}</a> `;
           });
-          // Add Return to Main Page button
           downloadLinksHtml += `<a href="/" class="btn btn-primary mt-3">חזור לדף הראשי</a>`;
         }
 
-        // Round progress percentages
-        const progressPercent = Math.round(item.progress);
-
-        // Additional info after processing
         let additionalInfo = '';
         if (item.status === 'Completed') {
           additionalInfo = `
@@ -175,24 +194,14 @@
 
         gmailProgressLog.innerHTML += `
           <div class="progress-item">
-            <p>${item.fileName || ''}: ${item.status}</p>
-            <div class="progress">
-              <div
-                class="progress-bar"
-                role="progressbar"
-                style="width: ${progressPercent}%"
-                aria-valuenow="${progressPercent}"
-                aria-valuemin="0"
-                aria-valuemax="100"
-              >${progressPercent}%</div>
-            </div>
+            ${statusHtml}
+            ${progressHtml}
             ${additionalInfo}
             ${downloadLinksHtml}
           </div>
         `;
       });
     }
-
   </script>
 </body>
 </html>
