@@ -854,24 +854,32 @@ app.post('/upload', upload, async (req, res) => {
     for (let i = 0; i < files.length; i++) {
       const filePath = files[i];
       const fileName = path.basename(filePath);
-
+  
       // Update status to 'Processing'
       progressData[i].status = 'Processing';
       progressData[i].progress = 25;
       emitProgress();
-
+  
       // Process the file
       const expenseData = await processFile(filePath, serviceAccountAuth, idNumber);
-
+  
       if (expenseData) {
         expenses.push(expenseData);
+  
+        // Update progress data with expense information
         progressData[i].status = 'Completed';
         progressData[i].progress = 100;
+        progressData[i].businessName = expenseData.BusinessName || 'N/A';
+        progressData[i].date = expenseData.Date || 'N/A';
+        progressData[i].totalPrice = expenseData.TotalPrice ? parseFloat(expenseData.TotalPrice).toFixed(2) : 'N/A';
       } else {
         progressData[i].status = 'Failed';
         progressData[i].progress = 100;
       }
-
+  
+      // Round progress percentages
+      progressData[i].progress = Math.round(progressData[i].progress);
+  
       emitProgress();
     }
 
@@ -1183,28 +1191,48 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, async (req, res)
       return;
     }
 
-    progressEmitter.emit('progress', [{ status: 'Processing files...', progress: 30 }]);
-
+    const progressData = files.map((filePath) => ({
+      fileName: path.basename(filePath),
+      status: 'Pending',
+      progress: 0,
+    }));
+  
     const expenses = [];
     const serviceAccountAuth = authenticateServiceAccount();
     await serviceAccountAuth.authorize();
-
+  
     for (let i = 0; i < files.length; i++) {
       const filePath = files[i];
       const fileName = path.basename(filePath);
-
-      // Update progress
-      const progressPercent = 30 + ((i + 1) / files.length) * 50; // Between 30% and 80%
-      progressEmitter.emit('progress', [{ status: `Processing ${fileName}...`, progress: progressPercent }]);
-
+  
+      // Update status to 'Processing'
+      progressData[i].status = 'Processing';
+      progressData[i].progress = 25;
+      progressEmitter.emit('progress', progressData);
+  
       // Process the file
       const expenseData = await processFile(filePath, serviceAccountAuth, idNumber);
-
+  
       if (expenseData) {
         expenses.push(expenseData);
+  
+        // Update progress data with expense information
+        progressData[i].status = 'Completed';
+        progressData[i].progress = 100;
+        progressData[i].businessName = expenseData.BusinessName || 'N/A';
+        progressData[i].date = expenseData.Date || 'N/A';
+        progressData[i].totalPrice = expenseData.TotalPrice ? parseFloat(expenseData.TotalPrice).toFixed(2) : 'N/A';
+      } else {
+        progressData[i].status = 'Failed';
+        progressData[i].progress = 100;
       }
+  
+      // Round progress percentages
+      progressData[i].progress = Math.round(progressData[i].progress);
+  
+      progressEmitter.emit('progress', progressData);
     }
-
+  
     progressEmitter.emit('progress', [{ status: 'Creating Excel file...', progress: 80 }]);
 
     const excelPath = await createExpenseExcel(
@@ -1282,10 +1310,10 @@ async function downloadGmailAttachments(auth, startDate, endDate, folderPath) {
   const gmail = google.gmail({ version: 'v1', auth });
 
   const excludedSubjectKeywords = ['חשבון עסקה'];
-
+  const queryEndDate = new Date(endDate.getTime() + 24 * 60 * 60 * 1000);
   // Prepare date queries
   const startDateQuery = formatDateForGmail(startDate);
-  const endDateQuery = formatDateForGmail(endDate);
+  const endDateQuery = formatDateForGmail(queryEndDate);
 
   const query = `after:${startDateQuery} before:${endDateQuery}`;
   console.log('Gmail query:', query);

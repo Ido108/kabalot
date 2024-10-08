@@ -166,7 +166,7 @@
 
   <!-- Footer -->
   <div class="footer">
-    <p>&copy; 2023 עיבוד מסמכים</p>
+    <p>&copy; עידו הנסיך 2024</p>
   </div>
 
   <!-- Bootstrap 5 JS -->
@@ -237,6 +237,20 @@
           // Add Return to Main Page button
           downloadLinksHtml += `<a href="/" class="btn btn-primary mt-3">חזור לדף הראשי</a>`;
         }
+
+        // Round progress percentages
+        const progressPercent = Math.round(item.progress);
+
+        // Additional info after processing
+        let additionalInfo = '';
+        if (item.status === 'Completed') {
+          additionalInfo = `
+            <p>שם העסק: ${item.businessName || 'N/A'}</p>
+            <p>תאריך: ${item.date || 'N/A'}</p>
+            <p>סכום כולל: ${item.totalPrice || 'N/A'}</p>
+          `;
+        }
+
         progressLog.innerHTML += `
           <div class="progress-item">
             <p>${item.fileName || ''}: ${item.status}</p>
@@ -244,17 +258,19 @@
               <div
                 class="progress-bar"
                 role="progressbar"
-                style="width: ${item.progress}%"
-                aria-valuenow="${item.progress}"
+                style="width: ${progressPercent}%"
+                aria-valuenow="${progressPercent}"
                 aria-valuemin="0"
                 aria-valuemax="100"
-              >${item.progress}%</div>
+              >${progressPercent}%</div>
             </div>
+            ${additionalInfo}
             ${downloadLinksHtml}
           </div>
         `;
       });
     }
+
 
     // Gmail Login and Processing
     const gmailLoginButton = document.getElementById('gmail-login-button');
@@ -340,24 +356,40 @@
           // Add Return to Main Page button
           downloadLinksHtml += `<a href="/" class="btn btn-primary mt-3">חזור לדף הראשי</a>`;
         }
+
+        // Round progress percentages
+        const progressPercent = Math.round(item.progress);
+
+        // Additional info after processing
+        let additionalInfo = '';
+        if (item.status === 'Completed') {
+          additionalInfo = `
+            <p>שם העסק: ${item.businessName || 'N/A'}</p>
+            <p>תאריך: ${item.date || 'N/A'}</p>
+            <p>סכום כולל: ${item.totalPrice || 'N/A'}</p>
+          `;
+        }
+
         gmailProgressLog.innerHTML += `
           <div class="progress-item">
-            <p>${item.status}</p>
+            <p>${item.fileName || ''}: ${item.status}</p>
             <div class="progress">
               <div
                 class="progress-bar"
                 role="progressbar"
-                style="width: ${item.progress}%"
-                aria-valuenow="${item.progress}"
+                style="width: ${progressPercent}%"
+                aria-valuenow="${progressPercent}"
                 aria-valuemin="0"
                 aria-valuemax="100"
-              >${item.progress}%</div>
+              >${progressPercent}%</div>
             </div>
+            ${additionalInfo}
             ${downloadLinksHtml}
           </div>
         `;
       });
     }
+
   </script>
 </body>
 </html>
