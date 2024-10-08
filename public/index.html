@@ -295,9 +295,10 @@
     function startGmailProcessing() {
       const formData = new FormData(gmailForm);
       const additionalFiles = additionalFilesInput.files;
-      const idNumber = gmailIdNumberInput.value;
+      // const idNumber = idNumberInput.value; // No need to retrieve idNumber again
 
-      formData.append('idNumber', idNumber);
+      // formData.append('idNumber', idNumber); // Remove this line
+
       for (const file of additionalFiles) {
         formData.append('additionalFiles', file);
       }
