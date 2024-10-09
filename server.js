@@ -1057,6 +1057,11 @@ app.get('/upload-progress', (req, res) => {
   res.setHeader('Cache-Control', 'no-cache');
   res.flushHeaders();
 
+  // Send a comment line every 30 seconds to keep the connection alive
+  const heartbeatInterval = setInterval(() => {
+    res.write(':\n\n'); // SSE comment to keep the connection open
+  }, 30000); // 30 seconds
+
   const onProgress = (data) => {
     res.write(`data: ${JSON.stringify(data)}\n\n`);
   };
@@ -1065,6 +1070,7 @@ app.get('/upload-progress', (req, res) => {
 
   req.on('close', () => {
     progressEmitter.removeListener('progress', onProgress);
+    clearInterval(heartbeatInterval); // Clear the heartbeat interval
     // Clean up after the connection is closed
     progressEmitters.delete(sessionId);
   });
@@ -1484,6 +1490,11 @@ app.get('/gmail-progress', (req, res) => {
   res.setHeader('Cache-Control', 'no-cache');
   res.flushHeaders();
 
+  // Send a comment line every 30 seconds to keep the connection alive
+  const heartbeatInterval = setInterval(() => {
+    res.write(':\n\n');
+  }, 30000); // 30 seconds
+
   const onProgress = (data) => {
     res.write(`data: ${JSON.stringify(data)}\n\n`);
   };
@@ -1492,6 +1503,7 @@ app.get('/gmail-progress', (req, res) => {
 
   req.on('close', () => {
     progressEmitter.removeListener('progress', onProgress);
+    clearInterval(heartbeatInterval);
     progressEmitters.delete(sessionId);
   });
 });
