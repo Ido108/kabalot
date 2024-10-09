@@ -1501,7 +1501,7 @@ function formatDateForGmail(date) {
 }
 
 /**
- * Function to download all PDF attachments from emails that meet specific criteria
+ * Function to download PDF attachments from emails that meet specific criteria
  * @param {google.auth.OAuth2} auth - Authenticated OAuth2 client
  * @param {Date} startDate - Start date for filtering emails
  * @param {Date} endDate - End date for filtering emails
@@ -1521,6 +1521,7 @@ async function downloadGmailAttachments(auth, startDate, endDate, folderPath) {
     'אישור תשלום',
     'receipt',
     'invoice',
+    'חשבון חודשי',
   ];
 
   // Excluded senders unless subject contains specific keywords
@@ -1536,12 +1537,18 @@ async function downloadGmailAttachments(auth, startDate, endDate, folderPath) {
     'הקבלה',
   ];
 
+  // Keywords to look for in attachment filenames
+  const attachmentKeywords = [
+    'receipt',
+    'חשבונית',
+  ];
+
   // Adjust the end date to include the entire day
   endDate.setHours(23, 59, 59, 999);
-
-  // Prepare date queries in 'YYYY/MM/DD' format
+  const queryEndDate = new Date(endDate.getTime() + 24 * 60 * 60 * 1000);
+  // Prepare date queries
   const startDateQuery = formatDateForGmail(startDate);
-  const endDateQuery = formatDateForGmail(endDate);
+  const endDateQuery = formatDateForGmail(queryEndDate);
 
   // Fetch messages with attachments
   const query = `after:${startDateQuery} before:${endDateQuery} has:attachment`;
@@ -1588,19 +1595,6 @@ async function downloadGmailAttachments(auth, startDate, endDate, folderPath) {
     const lowerCaseSubject = subject.toLowerCase();
     const lowerCaseSender = sender.toLowerCase();
 
-    // Skip messages that do not match positive subject keywords
-    let subjectMatchesPositiveKeywords = false;
-    for (const keyword of positiveSubjectKeywords) {
-      if (lowerCaseSubject.includes(keyword.toLowerCase())) {
-        subjectMatchesPositiveKeywords = true;
-        break;
-      }
-    }
-    if (!subjectMatchesPositiveKeywords) {
-      console.log('Skipping message without positive subject keywords:', subject);
-      continue; // Skip this message
-    }
-
     // Check if the sender is in the excluded list
     let isExcludedSender = false;
     for (const excludedSender of excludedSenders) {
@@ -1631,12 +1625,38 @@ async function downloadGmailAttachments(auth, startDate, endDate, folderPath) {
       }
     }
 
-    // Proceed to download all PDF attachments in the message
+    // Determine if the subject contains positive keywords
+    let subjectMatchesPositiveKeywords = false;
+    for (const keyword of positiveSubjectKeywords) {
+      if (lowerCaseSubject.includes(keyword.toLowerCase())) {
+        subjectMatchesPositiveKeywords = true;
+        break;
+      }
+    }
+
+    // Proceed to process attachments
     if (msg.data.payload) {
       // Get all parts of the message recursively
       const parts = getParts(msg.data.payload);
 
-      let pdfFoundInMessage = false;
+      let receiptFoundInThread = false;
+
+      // Check if any attachment filename contains the attachment keywords
+      for (const part of parts) {
+        if (part.filename && part.filename.length > 0) {
+          const fileName = part.filename;
+          const normalizedFileName = fileName.toLowerCase();
+          for (const keyword of attachmentKeywords) {
+            if (normalizedFileName.includes(keyword.toLowerCase())) {
+              receiptFoundInThread = true;
+              break;
+            }
+          }
+          if (receiptFoundInThread) {
+            break;
+          }
+        }
+      }
 
       for (const part of parts) {
         if (part.filename && part.filename.length > 0) {
@@ -1645,31 +1665,82 @@ async function downloadGmailAttachments(auth, startDate, endDate, folderPath) {
 
           const contentType = part.mimeType;
           const fileName = part.filename;
+          const normalizedFileName = fileName.toLowerCase();
           const isPDF = isPdfFile(contentType, fileName);
 
           if (isPDF) {
-            const attachment = await gmail.users.messages.attachments.get({
-              userId: 'me',
-              messageId: messageData.id,
-              id: attachmentId,
-            });
+            if (subjectMatchesPositiveKeywords) {
+              // Handle situation where both receipt and invoice are in the same message
+              if (receiptFoundInThread) {
+                // If receipt is found in the message, collect only PDFs with filenames containing attachment keywords
+                let attachmentMatchesKeyword = false;
+                for (const keyword of attachmentKeywords) {
+                  if (normalizedFileName.includes(keyword.toLowerCase())) {
+                    attachmentMatchesKeyword = true;
+                    break;
+                  }
+                }
+                if (attachmentMatchesKeyword) {
+                  const attachment = await gmail.users.messages.attachments.get({
+                    userId: 'me',
+                    messageId: messageData.id,
+                    id: attachmentId,
+                  });
 
-            const data = attachment.data.data;
-            const buffer = Buffer.from(data, 'base64');
+                  const data = attachment.data.data;
+                  const buffer = Buffer.from(data, 'base64');
 
-            const filePath = path.join(folderPath, sanitize(fileName));
-            fs.writeFileSync(filePath, buffer);
-            console.log(`Saved PDF attachment: ${filePath}`);
+                  const filePath = path.join(folderPath, sanitize(fileName));
+                  fs.writeFileSync(filePath, buffer);
+                  console.log(`Saved PDF attachment: ${filePath}`);
+                } else {
+                  console.log('Skipping non-receipt PDF in message with receipt:', fileName);
+                }
+              } else {
+                // If no receipt is found based on filenames, collect the PDF as usual
+                const attachment = await gmail.users.messages.attachments.get({
+                  userId: 'me',
+                  messageId: messageData.id,
+                  id: attachmentId,
+                });
 
-            pdfFoundInMessage = true;
+                const data = attachment.data.data;
+                const buffer = Buffer.from(data, 'base64');
+
+                const filePath = path.join(folderPath, sanitize(fileName));
+                fs.writeFileSync(filePath, buffer);
+                console.log(`Saved PDF attachment: ${filePath}`);
+              }
+            } else {
+              // If subject does not contain positive keywords, but attachment filename contains keywords
+              let attachmentMatchesKeyword = false;
+              for (const keyword of attachmentKeywords) {
+                if (normalizedFileName.includes(keyword.toLowerCase())) {
+                  attachmentMatchesKeyword = true;
+                  break;
+                }
+              }
+              if (attachmentMatchesKeyword) {
+                const attachment = await gmail.users.messages.attachments.get({
+                  userId: 'me',
+                  messageId: messageData.id,
+                  id: attachmentId,
+                });
+
+                const data = attachment.data.data;
+                const buffer = Buffer.from(data, 'base64');
+
+                const filePath = path.join(folderPath, sanitize(fileName));
+                fs.writeFileSync(filePath, buffer);
+                console.log(`Saved PDF attachment based on filename keyword: ${filePath}`);
+              } else {
+                console.log('Skipping attachment as it does not match criteria:', fileName);
+              }
+            }
           } else {
             console.log('Skipping non-PDF attachment:', fileName);
           }
         }
-      }
-
-      if (!pdfFoundInMessage) {
-        console.log('No PDF attachments found in message:', subject);
       }
     } else {
       console.log('No attachments found in message:', subject);
