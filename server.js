@@ -1501,16 +1501,15 @@ function formatDateForGmail(date) {
 }
 
 // Function to download Gmail attachments
-async function downloadGmailAttachments(auth, startDate, endDate, folderPath) {
+async function downloadGmailAttachments(auth, startDate, endDate) {
   const gmail = google.gmail({ version: 'v1', auth });
 
-  // Define keywords to exclude based on the subject line
-  const excludedSubjectKeywords = ['חשבון עסקה'];
-
-  // Adjust the end date to include the entire day
+  // Create folder to save attachments
+  const folderName = `קבלות ${formatDate(startDate)} עד ${formatDate(endDate)}`;
+  const folderPath = path.join(INPUT_FOLDER, folderName);
+  fs.ensureDirSync(folderPath);
   endDate.setHours(23, 59, 59, 999);
-  const queryEndDate = new Date(endDate.getTime() + 24 * 60 * 60 * 1000); // Add one day to include end of day
-
+  const queryEndDate = new Date(endDate.getTime() + 24 * 60 * 60 * 1000);
   // Prepare date queries
   const startDateQuery = formatDateForGmail(startDate);
   const endDateQuery = formatDateForGmail(queryEndDate);
@@ -1518,7 +1517,6 @@ async function downloadGmailAttachments(auth, startDate, endDate, folderPath) {
   const query = `after:${startDateQuery} before:${endDateQuery}`;
   console.log('Gmail query:', query);
 
-  // Senders to exclude and keywords to look for
   const excludedSenders = [
     'חברת חשמל לישראל',
     'עיריית תל אביב-יפו',
@@ -1565,24 +1563,7 @@ async function downloadGmailAttachments(auth, startDate, endDate, folderPath) {
       continue;
     }
 
-    // Exclude messages with certain keywords in the subject
-    let subjectContainsExcludedKeyword = false;
-    for (const excludedKeyword of excludedSubjectKeywords) {
-      if (subject.includes(excludedKeyword)) {
-        subjectContainsExcludedKeyword = true;
-        console.log(
-          `Skipping message with subject containing excluded keyword: ${excludedKeyword}`
-        );
-        break;
-      }
-    }
-
-    if (subjectContainsExcludedKeyword) {
-      // Skip this message
-      continue;
-    }
-
-    // Exclusion logic based on sender and keywords
+    // Exclusion logic
     let excludeThread = false;
     let keywordFound = false;
 
@@ -1592,25 +1573,24 @@ async function downloadGmailAttachments(auth, startDate, endDate, folderPath) {
         for (const keyword of keywords) {
           if (subject.includes(keyword)) {
             keywordFound = true;
-            break;
+            break; // No need to check further if keyword is found
           }
         }
-        break;
+        break; // No need to check other senders
       }
     }
 
     // Decide whether to skip the thread
     if (excludeThread && !keywordFound) {
+      // Skip this thread
       console.log('Skipping message from excluded sender:', sender);
       continue;
     }
 
-    // Initialize flag to check for receipts in the message
-    let receiptFoundInThread = false;
+    let receiptFoundInThread = false; // Flag to indicate if a receipt PDF has been found in this thread
 
-    // Ensure msg.data.payload.parts exists
-    if (msg.data.payload && msg.data.payload.parts) {
-      // First pass: check if there's a receipt PDF in the message
+    // First pass: check if there's a receipt PDF in the message
+    if (msg.data.payload.parts) {
       for (const part of msg.data.payload.parts) {
         if (part.filename && part.filename.length > 0) {
           const normalizedFileName = part.filename.toLowerCase();
@@ -1623,8 +1603,10 @@ async function downloadGmailAttachments(auth, startDate, endDate, folderPath) {
           }
         }
       }
+    }
 
-      // Second pass: process the attachments based on whether receipt was found
+    // Second pass: process the attachments based on whether receipt was found
+    if (msg.data.payload.parts) {
       for (const part of msg.data.payload.parts) {
         if (part.filename && part.filename.length > 0) {
           const attachmentId = part.body.attachmentId;
@@ -1650,16 +1632,11 @@ async function downloadGmailAttachments(auth, startDate, endDate, folderPath) {
               if (normalizedFileName.startsWith('receipt')) {
                 const filePath = path.join(folderPath, sanitize(fileName));
                 fs.writeFileSync(filePath, buffer);
-                console.log(`Saved attachment: ${filePath}`);
-              } else {
-                // Skip other PDFs in this thread
-                console.log('Skipping non-receipt PDF in receipt thread:', fileName);
               }
             } else {
               // If no receipt is found, collect the PDF as usual
               const filePath = path.join(folderPath, sanitize(fileName));
               fs.writeFileSync(filePath, buffer);
-              console.log(`Saved attachment: ${filePath}`);
             }
           }
         }
