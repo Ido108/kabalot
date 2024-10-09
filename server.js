@@ -1500,9 +1500,8 @@ function formatDateForGmail(date) {
   return format(date, 'yyyy/MM/dd');
 }
 
-// Function to download Gmail attachments
 /**
- * Function to download Gmail attachments that match specific criteria
+ * Function to download Gmail attachments that are receipts
  * @param {google.auth.OAuth2} auth - Authenticated OAuth2 client
  * @param {Date} startDate - Start date for filtering emails
  * @param {Date} endDate - End date for filtering emails
@@ -1517,13 +1516,21 @@ async function downloadGmailAttachments(auth, startDate, endDate, folderPath) {
     'חשבונית',
     'חשבונית מס',
     'הקבלה',
+    'החשבונית',
     'החשבונית החודשית',
     'אישור תשלום',
     'receipt',
-    'invoice'
+    'invoice',
   ];
 
   const positiveSenders = ['receipts', 'בזק']; // Include any other senders you're interested in
+
+  // Keywords to look for in attachment filenames for receipts
+  const receiptAttachmentKeywords = [
+    'receipt',
+    'קבלה',
+    'הקבלה',
+  ];
 
   // Adjust the end date to include the entire day
   endDate.setHours(23, 59, 59, 999);
@@ -1563,9 +1570,9 @@ async function downloadGmailAttachments(auth, startDate, endDate, folderPath) {
     });
 
     const headers = msg.data.payload.headers;
-    const fromHeader = headers.find((h) => h.name === 'From');
-    const subjectHeader = headers.find((h) => h.name === 'Subject');
-    const dateHeader = headers.find((h) => h.name === 'Date');
+    const fromHeader = headers.find((h) => h.name.toLowerCase() === 'from');
+    const subjectHeader = headers.find((h) => h.name.toLowerCase() === 'subject');
+    const dateHeader = headers.find((h) => h.name.toLowerCase() === 'date');
 
     const sender = fromHeader ? fromHeader.value : '';
     const subject = subjectHeader ? subjectHeader.value : '';
@@ -1598,13 +1605,9 @@ async function downloadGmailAttachments(auth, startDate, endDate, folderPath) {
     }
 
     // Skip messages that do not match positive criteria
-    if (!matchesPositiveCriteria(sender, subject)) {
-      console.log('Skipping message that does not match positive criteria:', subject);
-      continue;
-    }
 
-    // Check for receipts or invoices in attachments
-    let receiptOrInvoiceFoundInThread = false;
+    // Check for receipts in attachments
+    let receiptFoundInMessage = false;
 
     if (msg.data.payload.parts) {
       for (const part of msg.data.payload.parts) {
@@ -1612,22 +1615,21 @@ async function downloadGmailAttachments(auth, startDate, endDate, folderPath) {
           const normalizedFileName = part.filename.toLowerCase();
           const isPDF = isPdfFile(part.mimeType, part.filename);
 
-          if (
-            isPDF &&
-            (normalizedFileName.includes('receipt') ||
-              normalizedFileName.includes('invoice') ||
-              normalizedFileName.includes('קבלה') ||
-              normalizedFileName.includes('חשבונית'))
-          ) {
-            receiptOrInvoiceFoundInThread = true;
-            break; // Found a receipt or invoice in this message
+          if (isPDF) {
+            for (const keyword of receiptAttachmentKeywords) {
+              if (normalizedFileName.includes(keyword.toLowerCase())) {
+                receiptFoundInMessage = true;
+                break;
+              }
+            }
+            if (receiptFoundInMessage) break;
           }
         }
       }
     }
 
-    // Proceed if a receipt or invoice is found in the thread
-    if (msg.data.payload.parts && receiptOrInvoiceFoundInThread) {
+    // Proceed only if a receipt is found in the message
+    if (msg.data.payload.parts && receiptFoundInMessage) {
       for (const part of msg.data.payload.parts) {
         if (part.filename && part.filename.length > 0) {
           const attachmentId = part.body.attachmentId;
@@ -1648,18 +1650,21 @@ async function downloadGmailAttachments(auth, startDate, endDate, folderPath) {
           const isPDF = isPdfFile(contentType, fileName);
 
           if (isPDF) {
-            // Only save attachments that are receipts or invoices
-            if (
-              normalizedFileName.includes('receipt') ||
-              normalizedFileName.includes('invoice') ||
-              normalizedFileName.includes('קבלה') ||
-              normalizedFileName.includes('חשבונית')
-            ) {
+            // Only save attachments that match the receipt attachment keywords
+            let matchesReceiptKeyword = false;
+            for (const keyword of receiptAttachmentKeywords) {
+              if (normalizedFileName.includes(keyword.toLowerCase())) {
+                matchesReceiptKeyword = true;
+                break;
+              }
+            }
+
+            if (matchesReceiptKeyword) {
               const filePath = path.join(folderPath, sanitize(fileName));
               fs.writeFileSync(filePath, buffer);
-              console.log(`Saved attachment: ${filePath}`);
+              console.log(`Saved receipt attachment: ${filePath}`);
             } else {
-              console.log('Skipping non-receipt/invoice PDF:', fileName);
+              console.log('Skipping non-receipt PDF:', fileName);
             }
           } else {
             console.log('Skipping non-PDF attachment:', fileName);
@@ -1667,7 +1672,7 @@ async function downloadGmailAttachments(auth, startDate, endDate, folderPath) {
         }
       }
     } else {
-      console.log('No receipt or invoice found in message:', subject);
+      console.log('No receipts found in message:', subject);
     }
   }
 
