@@ -1501,30 +1501,40 @@ function formatDateForGmail(date) {
 }
 
 // Function to download Gmail attachments
+/**
+ * Function to download Gmail attachments that match specific criteria
+ * @param {google.auth.OAuth2} auth - Authenticated OAuth2 client
+ * @param {Date} startDate - Start date for filtering emails
+ * @param {Date} endDate - End date for filtering emails
+ * @param {string} folderPath - Path to the folder where attachments will be saved
+ */
 async function downloadGmailAttachments(auth, startDate, endDate, folderPath) {
   const gmail = google.gmail({ version: 'v1', auth });
 
-  // Define keywords to exclude based on the subject line
-  const excludedSubjectKeywords = ['חשבון עסקה'];
+  // Positive filters: Subject keywords and senders to include
+  const positiveSubjectKeywords = [
+    'קבלה',
+    'חשבונית',
+    'חשבונית מס',
+    'הקבלה',
+    'החשבונית החודשית',
+    'אישור תשלום',
+    'receipt',
+    'invoice'
+  ];
+
+  const positiveSenders = ['receipts', 'בזק']; // Include any other senders you're interested in
 
   // Adjust the end date to include the entire day
   endDate.setHours(23, 59, 59, 999);
   const queryEndDate = new Date(endDate.getTime() + 24 * 60 * 60 * 1000); // Add one day to include end of day
 
-  // Prepare date queries
+  // Prepare date queries in 'YYYY/MM/DD' format
   const startDateQuery = formatDateForGmail(startDate);
   const endDateQuery = formatDateForGmail(queryEndDate);
 
   const query = `after:${startDateQuery} before:${endDateQuery}`;
   console.log('Gmail query:', query);
-
-  // Senders to exclude and keywords to look for
-  const excludedSenders = [
-    'חברת חשמל לישראל',
-    'עיריית תל אביב-יפו',
-    'ארנונה - עיריית תל-אביב-יפו',
-  ];
-  const keywords = ['קבלה', 'חשבונית', 'חשבונית מס', 'הקבלה'];
 
   let nextPageToken = null;
   const allMessageIds = [];
@@ -1541,6 +1551,8 @@ async function downloadGmailAttachments(auth, startDate, endDate, folderPath) {
     allMessageIds.push(...messages);
     nextPageToken = res.data.nextPageToken;
   } while (nextPageToken);
+
+  console.log('Total messages found:', allMessageIds.length);
 
   // Process each message
   for (const messageData of allMessageIds) {
@@ -1565,67 +1577,57 @@ async function downloadGmailAttachments(auth, startDate, endDate, folderPath) {
       continue;
     }
 
-    // Exclude messages with certain keywords in the subject
-    let subjectContainsExcludedKeyword = false;
-    for (const excludedKeyword of excludedSubjectKeywords) {
-      if (subject.includes(excludedKeyword)) {
-        subjectContainsExcludedKeyword = true;
-        console.log(
-          `Skipping message with subject containing excluded keyword: ${excludedKeyword}`
-        );
-        break;
+    // Function to check if a message matches positive criteria
+    function matchesPositiveCriteria(sender, subject) {
+      const lowerCaseSubject = subject.toLowerCase();
+      const lowerCaseSender = sender.toLowerCase();
+
+      for (const keyword of positiveSubjectKeywords) {
+        if (lowerCaseSubject.includes(keyword.toLowerCase())) {
+          return true;
+        }
       }
+
+      for (const positiveSender of positiveSenders) {
+        if (lowerCaseSender.includes(positiveSender.toLowerCase())) {
+          return true;
+        }
+      }
+
+      return false;
     }
 
-    if (subjectContainsExcludedKeyword) {
-      // Skip this message
+    // Skip messages that do not match positive criteria
+    if (!matchesPositiveCriteria(sender, subject)) {
+      console.log('Skipping message that does not match positive criteria:', subject);
       continue;
     }
 
-    // Exclusion logic based on sender and keywords
-    let excludeThread = false;
-    let keywordFound = false;
+    // Check for receipts or invoices in attachments
+    let receiptOrInvoiceFoundInThread = false;
 
-    for (const excludedSender of excludedSenders) {
-      if (sender.includes(excludedSender)) {
-        excludeThread = true;
-        for (const keyword of keywords) {
-          if (subject.includes(keyword)) {
-            keywordFound = true;
-            break;
+    if (msg.data.payload.parts) {
+      for (const part of msg.data.payload.parts) {
+        if (part.filename && part.filename.length > 0) {
+          const normalizedFileName = part.filename.toLowerCase();
+          const isPDF = isPdfFile(part.mimeType, part.filename);
+
+          if (
+            isPDF &&
+            (normalizedFileName.includes('receipt') ||
+              normalizedFileName.includes('invoice') ||
+              normalizedFileName.includes('קבלה') ||
+              normalizedFileName.includes('חשבונית'))
+          ) {
+            receiptOrInvoiceFoundInThread = true;
+            break; // Found a receipt or invoice in this message
           }
         }
-        break;
       }
     }
 
-    // Decide whether to skip the thread
-    if (excludeThread && !keywordFound) {
-      console.log('Skipping message from excluded sender:', sender);
-      continue;
-    }
-
-    // Initialize flag to check for receipts in the message
-    let receiptFoundInThread = false;
-
-    // Ensure msg.data.payload.parts exists
-    if (msg.data.payload.parts) {
-        for (const part of msg.data.payload.parts) {
-          if (part.filename && part.filename.length > 0) {
-            const normalizedFileName = part.filename.toLowerCase();
-            if (
-              normalizedFileName.startsWith('receipt') &&
-              part.mimeType === 'application/pdf'
-            ) {
-              receiptFoundInThread = true;
-              break; // Found a receipt in this message
-            }
-        }
-      }
-    }  
-
-      // Second pass: process the attachments based on whether receipt was found
-    if (msg.data.payload.parts) {
+    // Proceed if a receipt or invoice is found in the thread
+    if (msg.data.payload.parts && receiptOrInvoiceFoundInThread) {
       for (const part of msg.data.payload.parts) {
         if (part.filename && part.filename.length > 0) {
           const attachmentId = part.body.attachmentId;
@@ -1642,29 +1644,30 @@ async function downloadGmailAttachments(auth, startDate, endDate, folderPath) {
 
           const contentType = part.mimeType;
           const fileName = part.filename;
+          const normalizedFileName = fileName.toLowerCase();
           const isPDF = isPdfFile(contentType, fileName);
 
           if (isPDF) {
-            const normalizedFileName = fileName.toLowerCase();
-            if (receiptFoundInThread) {
-              // If receipt is found in the thread, collect only PDFs starting with "receipt"
-              if (normalizedFileName.startsWith('receipt')) {
-                const filePath = path.join(folderPath, sanitize(fileName));
-                fs.writeFileSync(filePath, buffer);
-                console.log(`Saved attachment: ${filePath}`);
-              } else {
-                // Skip other PDFs in this thread
-                console.log('Skipping non-receipt PDF in receipt thread:', fileName);
-              }
-            } else {
-              // If no receipt is found, collect the PDF as usual
+            // Only save attachments that are receipts or invoices
+            if (
+              normalizedFileName.includes('receipt') ||
+              normalizedFileName.includes('invoice') ||
+              normalizedFileName.includes('קבלה') ||
+              normalizedFileName.includes('חשבונית')
+            ) {
               const filePath = path.join(folderPath, sanitize(fileName));
               fs.writeFileSync(filePath, buffer);
               console.log(`Saved attachment: ${filePath}`);
+            } else {
+              console.log('Skipping non-receipt/invoice PDF:', fileName);
             }
+          } else {
+            console.log('Skipping non-PDF attachment:', fileName);
           }
         }
       }
+    } else {
+      console.log('No receipt or invoice found in message:', subject);
     }
   }
 
