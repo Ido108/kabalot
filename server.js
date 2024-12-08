@@ -1180,7 +1180,8 @@ async function processNextGmailTask() {
       startDate,
       endDate
     );
-
+    const zipFileName = `processed_files_${Date.now()}.zip`;
+    const zipFilePath = await createZipFile(files, userFolder, zipFileName);
     const excelFileName = encodeURIComponent(path.basename(excelPath));
     const zipFileNameEncoded = encodeURIComponent(path.basename(zipFilePath));
     const baseUrl = process.env.BASE_URL || 'http://localhost:8080';
