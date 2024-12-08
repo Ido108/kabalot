@@ -291,14 +291,14 @@ async function processNextTask() {
         name
       );
 
+      const baseUrl = process.env.BASE_URL;
+      const excelUrl = `${baseUrl}/download/${excelFileName}`;
+      const zipUrl = `${baseUrl}/download/${zipFileNameEncoded}`;
       const zipFileName = `processed_files_${Date.now()}.zip`;
       const zipFilePath = await createZipFile(files, userFolder, zipFileName);
 
       const excelFileName = encodeURIComponent(path.basename(excelPath));
-      const excelUrl = `/download/${excelFileName}`;
-
       const zipFileNameEncoded = encodeURIComponent(path.basename(zipFilePath));
-      const zipUrl = `/download/${zipFileNameEncoded}`;
 
       // Store last results in session
       req.session.lastResults = {
