@@ -1181,21 +1181,19 @@ async function processNextGmailTask() {
       endDate
     );
 
-    const zipFileName = `processed_files_${Date.now()}.zip`;
-    const zipFilePath = await createZipFile(files, userFolder, zipFileName);
-
     const excelFileName = encodeURIComponent(path.basename(excelPath));
-    const excelUrl = `/download/${excelFileName}`;
-
     const zipFileNameEncoded = encodeURIComponent(path.basename(zipFilePath));
-    const zipUrl = `/download/${zipFileNameEncoded}`;
-
+    const baseUrl = process.env.BASE_URL || 'http://localhost:8080';
+    
+    const excelUrl = `${baseUrl}/download/${excelFileName}`;
+    const zipUrl = `${baseUrl}/download/${zipFileNameEncoded}`;
+    
     req.session.lastResults = {
       excelUrl,
       zipUrl,
       timestamp: new Date().toISOString()
     };
-
+    
     progressEmitter.emit('progress', [
       ...progressData,
       {
@@ -1207,7 +1205,7 @@ async function processNextGmailTask() {
         ],
       },
     ]);
-
+    
     if (email) {
       const mailOptions = {
         from: process.env.EMAIL_USER,
@@ -1220,7 +1218,7 @@ async function processNextGmailTask() {
         <p>הקישורים יהיו זמינים למשך שעה.</p>
         <p>תודה,<br>השירות שלך</p>`
       };
-
+    
       transporter.sendMail(mailOptions, (error, info) => {
         if (error) {
           console.error('Error sending email:', error);
