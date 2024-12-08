@@ -106,22 +106,23 @@ async function downloadGmailAttachments(auth, startDate, endDate, folderPath) {
     let receiptFoundInThread = false;
 
     // Ensure msg.data.payload.parts exists
-    if (msg.data.payload && msg.data.payload.parts) {
-      // First pass: check if there's a receipt PDF in the message
-      for (const part of msg.data.payload.parts) {
-        if (part.filename && part.filename.length > 0) {
-          const normalizedFileName = part.filename.toLowerCase();
-          if (
-            normalizedFileName.startsWith('receipt') &&
-            part.mimeType === 'application/pdf'
-          ) {
-            receiptFoundInThread = true;
-            break; // Found a receipt in this message
-          }
+    if (msg.data.payload.parts) {
+        for (const part of msg.data.payload.parts) {
+          if (part.filename && part.filename.length > 0) {
+            const normalizedFileName = part.filename.toLowerCase();
+            if (
+              normalizedFileName.startsWith('receipt') &&
+              part.mimeType === 'application/pdf'
+            ) {
+              receiptFoundInThread = true;
+              break; // Found a receipt in this message
+            }
         }
       }
+    }  
 
       // Second pass: process the attachments based on whether receipt was found
+    if (msg.data.payload.parts) {
       for (const part of msg.data.payload.parts) {
         if (part.filename && part.filename.length > 0) {
           const attachmentId = part.body.attachmentId;
