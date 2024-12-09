@@ -29,7 +29,10 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-app.use(cors());
+app.use(cors({
+  origin: '*', // Allow all origins (since mobile apps don't have a fixed origin)
+  credentials: true,
+}));
 app.use(express.static('public'));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
@@ -280,6 +283,7 @@ async function processNextTask() {
     }
 
     if (expenses.length > 0) {
+      // Create Excel file
       const startDate = formatDate(new Date());
       const endDate = formatDate(new Date());
       const excelPath = await createExpenseExcel(
@@ -291,14 +295,16 @@ async function processNextTask() {
         name
       );
 
-      const baseUrl = process.env.BASE_URL;
-      const excelUrl = `${baseUrl}/download/${excelFileName}`;
-      const zipUrl = `${baseUrl}/download/${zipFileNameEncoded}`;
+      // Create ZIP file
       const zipFileName = `processed_files_${Date.now()}.zip`;
       const zipFilePath = await createZipFile(files, userFolder, zipFileName);
 
+      // Prepare file names and URLs
       const excelFileName = encodeURIComponent(path.basename(excelPath));
       const zipFileNameEncoded = encodeURIComponent(path.basename(zipFilePath));
+      const baseUrl = process.env.BASE_URL || 'https://kabalot.up.railway.app';
+      const excelUrl = `${baseUrl}/download/${excelFileName}`;
+      const zipUrl = `${baseUrl}/download/${zipFileNameEncoded}`;
 
       // Store last results in session
       req.session.lastResults = {
@@ -307,6 +313,7 @@ async function processNextTask() {
         timestamp: new Date().toISOString()
       };
 
+      // Emit completion progress
       progressEmitter.emit('progress', [
         ...progressData,
         {
@@ -1023,13 +1030,23 @@ app.get('/gmail', authenticateGmail, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'gmail.html'));
 });
 
-app.post('/process-gmail', authenticateGmail, additionalUpload, (req, res) => {
+app.post('/process-gmail', additionalUpload, async (req, res) => {
+  const accessToken = req.body.accessToken;
+  if (!accessToken) {
+    return res.status(400).send('Access token is required');
+  }
+
+  // Create a new OAuth2 client with the access token
+  const auth = new google.auth.OAuth2();
+  auth.setCredentials({ access_token: accessToken });
+
   if (!req.session.sessionId) {
     req.session.sessionId = uuidv4();
   }
   const sessionId = req.session.sessionId;
   const userFolder = path.join(INPUT_FOLDER, sessionId);
   fs.ensureDirSync(userFolder);
+
   const additionalFiles = req.files ? req.files.map(file => file.path) : [];
   const progressEmitter = new EventEmitter();
   progressEmitters.set(sessionId, progressEmitter);
@@ -1041,6 +1058,7 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, (req, res) => {
     endDate: req.body.endDate,
     idNumber: req.body.idNumber || '',
     email: req.body.email || '',
+    accessToken,
     progressEmitter,
     additionalFiles,
     req,
@@ -1108,6 +1126,7 @@ async function processNextGmailTask() {
     endDate,
     idNumber,
     email,
+    accessToken,
     progressEmitter,
     req,
     additionalFiles,
@@ -1118,7 +1137,9 @@ async function processNextGmailTask() {
       { status: 'Processing started.', progress: 0 },
     ]);
 
-    const auth = req.oAuth2Client;
+    const auth = new google.auth.OAuth2();
+    auth.setCredentials({ access_token: accessToken });
+
     const customPrefix = 'סיכום הוצאות';
 
     progressEmitter.emit('progress', [{ status: 'Downloading Gmail attachments...', progress: 10 }]);
@@ -1184,7 +1205,7 @@ async function processNextGmailTask() {
     const zipFilePath = await createZipFile(files, userFolder, zipFileName);
     const excelFileName = encodeURIComponent(path.basename(excelPath));
     const zipFileNameEncoded = encodeURIComponent(path.basename(zipFilePath));
-    const baseUrl = process.env.BASE_URL || 'http://localhost:8080';
+    const baseUrl = process.env.BASE_URL || 'https://kabalot.up.railway.app';
     
     const excelUrl = `${baseUrl}/download/${excelFileName}`;
     const zipUrl = `${baseUrl}/download/${zipFileNameEncoded}`;
@@ -1266,10 +1287,30 @@ function isPdfFile(contentType, fileName) {
 async function downloadGmailAttachments(auth, startDate, endDate, folderPath) {
   const gmail = google.gmail({ version: 'v1', auth });
 
-  const positiveSubjectKeywords = [    'קבלה',    'חשבונית',    'חשבונית מס',    'הקבלה',    'החשבונית',    'החשבונית החודשית',    'אישור תשלום',    'receipt',    'invoice',    'חשבון חודשי',  ];
+  const positiveSubjectKeywords = [
+    'קבלה',
+    'חשבונית',
+    'חשבונית מס',
+    'הקבלה',
+    'החשבונית',
+    'החשבונית החודשית',
+    'אישור תשלום',
+    'receipt',
+    'invoice',
+    'חשבון חודשי',
+  ];
 
-  const excludedSenders = [    'חברת חשמל לישראל',    'עיריית תל אביב-יפו',    'ארנונה - עיריית תל-אביב-יפו',  ];
-  const senderExceptionKeywords = [    'קבלה',    'חשבונית',    'חשבונית מס',    'הקבלה',  ];
+  const excludedSenders = [
+    'חברת חשמל לישראל',
+    'עיריית תל אביב-יפו',
+    'ארנונה - עיריית תל-אביב-יפו',
+  ];
+  const senderExceptionKeywords = [
+    'קבלה',
+    'חשבונית',
+    'חשבונית מס',
+    'הקבלה',
+  ];
 
   endDate.setHours(23, 59, 59, 999);
   const queryEndDate = new Date(endDate.getTime() + 24 * 60 * 60 * 1000);
@@ -1358,7 +1399,10 @@ async function downloadGmailAttachments(auth, startDate, endDate, folderPath) {
 
       let receiptFoundInThread = false;
 
-      const attachmentKeywords = [        'receipt',        'חשבונית',      ];
+      const attachmentKeywords = [
+        'receipt',
+        'חשבונית',
+      ];
 
       for (const part of parts) {
         if (part.filename && part.filename.length > 0) {
