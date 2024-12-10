@@ -1058,7 +1058,7 @@ app.post('/process-gmail', additionalUpload, async (req, res) => {
     endDate: req.body.endDate,
     idNumber: req.body.idNumber || '',
     email: req.body.email || '',
-    accessToken,
+    auth, // Pass the authenticated client
     progressEmitter,
     additionalFiles,
     req,
@@ -1126,7 +1126,7 @@ async function processNextGmailTask() {
     endDate,
     idNumber,
     email,
-    accessToken,
+    auth, // Use the authenticated client passed in the task
     progressEmitter,
     req,
     additionalFiles,
@@ -1137,14 +1137,13 @@ async function processNextGmailTask() {
       { status: 'Processing started.', progress: 0 },
     ]);
 
-    const auth = new google.auth.OAuth2();
-    auth.setCredentials({ access_token: accessToken });
-
     const customPrefix = 'סיכום הוצאות';
 
     progressEmitter.emit('progress', [{ status: 'Downloading Gmail attachments...', progress: 10 }]);
 
     await downloadGmailAttachments(auth, new Date(startDate), new Date(endDate), userFolder);
+
+
 
     let files = fs.readdirSync(userFolder).map((file) => path.join(userFolder, file));
     additionalFiles.forEach(file => {
