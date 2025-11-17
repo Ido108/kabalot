@@ -24,7 +24,14 @@ const session = require('express-session');
 const events = require('events');
 const archiver = require('archiver');
 const nodemailer = require('nodemailer'); // Added for email
-const { franc } = require('franc-min');
+let franc;
+import('franc-min')
+  .then((module) => {
+    franc = module.franc || module.default;
+  })
+  .catch((error) => {
+    console.error('Failed to load franc-min:', error);
+  });
 
 const app = express();
 
@@ -418,6 +425,10 @@ function detectCurrency(value, preferredLanguage = 'en') {
 
 function detectLanguageFromText(text) {
   if (!text) return null;
+  if (!franc) {
+    console.warn('Language detection skipped: franc-min not loaded yet.');
+    return null;
+  }
   const francCode = franc(text, { whitelist: ['eng', 'heb'] });
   if (francCode === 'heb') {
     return 'iw';
