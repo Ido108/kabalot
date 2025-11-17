@@ -1,4 +1,11 @@
-require('dotenv').config(); // Load environment variables
+﻿require('dotenv').config(); // Load environment variables
+const nodeBuffer = require('buffer');
+if (!nodeBuffer.SlowBuffer && nodeBuffer.Buffer) {
+  nodeBuffer.SlowBuffer = nodeBuffer.Buffer;
+}
+if (typeof global.SlowBuffer === 'undefined' && nodeBuffer.SlowBuffer) {
+  global.SlowBuffer = nodeBuffer.SlowBuffer;
+}
 const { v4: uuidv4 } = require('uuid');
 const express = require('express');
 const multer = require('multer');
@@ -17,6 +24,7 @@ const session = require('express-session');
 const events = require('events');
 const archiver = require('archiver');
 const nodemailer = require('nodemailer'); // Added for email
+const { franc } = require('franc-min');
 
 const app = express();
 
@@ -89,6 +97,16 @@ const DOCUMENT_AI_CONFIG = {
 
 const SERVICE_ACCOUNT_BASE64 = process.env.SERVICE_ACCOUNT_BASE64;
 const SCOPES = ['https://www.googleapis.com/auth/cloud-platform'];
+const LANGUAGE_HINTS = ['iw', 'en'];
+const MAX_CONCURRENT_FILE_PROCESSING = Math.max(
+  1,
+  parseInt(process.env.MAX_CONCURRENT_FILE_PROCESSING || '3', 10)
+);
+const PROCESSED_FILE_CACHE_LIMIT = Math.max(
+  1,
+  parseInt(process.env.PROCESSED_FILE_CACHE_LIMIT || '200', 10)
+);
+const processedFileCache = new Map();
 
 function authenticateServiceAccount() {
   if (!SERVICE_ACCOUNT_BASE64) {
@@ -229,11 +247,11 @@ async function processNextTask() {
 
   try {
     progressEmitter.emit('progress', [
-      { status: 'Processing started.', progress: 0 },
+      { status: 'העיבוד החל.', progress: 0 },
     ]);
 
     if (!files || files.length === 0) {
-      progressEmitter.emit('progress', [{ status: 'No files uploaded.', progress: 100 }]);
+      progressEmitter.emit('progress', [{ status: 'לא הועלו קבצים.', progress: 100 }]);
       return;
     }
 
@@ -255,29 +273,33 @@ async function processNextTask() {
     const serviceAccountAuth = authenticateServiceAccount();
     await serviceAccountAuth.authorize();
 
-    for (let i = 0; i < files.length; i++) {
-      progressData[i].status = 'Processing';
-      progressData[i].progress = 25;
+    await processFilesConcurrently(files, async (filePath, index) => {
+      progressData[index].status = 'Processing';
+      progressData[index].progress = 25;
       emitProgress();
 
-      const expenseData = await processFile(files[i], serviceAccountAuth, idNumber);
+      const expenseData = await getExpenseDataWithCache(
+        filePath,
+        serviceAccountAuth,
+        idNumber
+      );
 
       if (expenseData) {
         expenses.push(expenseData);
-        progressData[i].status = 'Completed';
-        progressData[i].progress = 100;
-        progressData[i].businessName = expenseData.BusinessName || 'N/A';
-        progressData[i].date = expenseData.Date || 'N/A';
-        progressData[i].totalPrice = expenseData.TotalPrice
+        progressData[index].status = 'Completed';
+        progressData[index].progress = 100;
+        progressData[index].businessName = expenseData.BusinessName || 'N/A';
+        progressData[index].date = expenseData.Date || 'N/A';
+        progressData[index].totalPrice = expenseData.TotalPrice
           ? parseFloat(expenseData.TotalPrice).toFixed(2)
           : 'N/A';
       } else {
-        progressData[i].status = 'Failed';
-        progressData[i].progress = 100;
+        progressData[index].status = 'Failed';
+        progressData[index].progress = 100;
       }
 
       emitProgress();
-    }
+    });
 
     if (expenses.length > 0) {
       const startDate = formatDate(new Date());
@@ -291,14 +313,14 @@ async function processNextTask() {
         name
       );
 
-      const baseUrl = process.env.BASE_URL;
-      const excelUrl = `${baseUrl}/download/${excelFileName}`;
-      const zipUrl = `${baseUrl}/download/${zipFileNameEncoded}`;
       const zipFileName = `processed_files_${Date.now()}.zip`;
       const zipFilePath = await createZipFile(files, userFolder, zipFileName);
 
       const excelFileName = encodeURIComponent(path.basename(excelPath));
       const zipFileNameEncoded = encodeURIComponent(path.basename(zipFilePath));
+      const baseUrl = process.env.BASE_URL || 'http://localhost:8080';
+      const excelUrl = `${baseUrl}/download/${excelFileName}`;
+      const zipUrl = `${baseUrl}/download/${zipFileNameEncoded}`;
 
       // Store last results in session
       req.session.lastResults = {
@@ -310,7 +332,7 @@ async function processNextTask() {
       progressEmitter.emit('progress', [
         ...progressData,
         {
-          status: 'Processing complete. Download the files below. Files will be available for 1 hour.',
+          status: 'העיבוד הושלם. ניתן להוריד את הקבצים בשעה הקרובה.',
           progress: 100,
           downloadLinks: [
             { label: 'הורד קובץ אקסל', url: excelUrl },
@@ -325,12 +347,7 @@ async function processNextTask() {
           from: process.env.EMAIL_USER,
           to: email,
           subject: 'Your Processed Expense Files',
-          html: `<p>שלום,</p>
-          <p>קבציך עובדו בהצלחה. ניתן להוריד את הקבצים מהקישורים הבאים:</p>
-          <p><a href="${excelUrl}">הורדת אקסל</a></p>
-          <p><a href="${zipUrl}">הורדת קובצי ZIP</a></p>
-          <p>הקישורים יהיו זמינים למשך שעה.</p>
-          <p>תודה,<br>השירות שלך</p>`
+          html: buildResultEmailHtml(excelUrl, zipUrl),
         };
 
         transporter.sendMail(mailOptions, (error, info) => {
@@ -344,13 +361,13 @@ async function processNextTask() {
     } else {
       progressEmitter.emit('progress', [
         ...progressData,
-        { status: 'No expenses extracted.', progress: 100 },
+        { status: 'לא זוהו נתוני הוצאה.', progress: 100 },
       ]);
     }
   } catch (processingError) {
     console.error('Processing Error:', processingError.message);
     progressEmitter.emit('progress', [
-      { status: `Processing Error: ${processingError.message}`, progress: 100 },
+      { status: `שגיאת עיבוד: ${processingError.message}`, progress: 100 },
     ]);
   } finally {
     scheduleFolderDeletion(userFolder, 3600000);
@@ -380,17 +397,184 @@ async function isPdfEncrypted(filePath) {
   }
 }
 
-function detectCurrency(value) {
-  const usdRegex = /\$|USD/;
-  const ilsRegex = /₪|ILS|ש"ח/;
+function detectCurrency(value, preferredLanguage = 'en') {
+  if (!value) {
+    return preferredLanguage === 'iw' ? 'ILS' : 'USD';
+  }
 
-  if (usdRegex.test(value)) {
+  const normalized = value.toUpperCase();
+  const usdRegex = /\$|USD|DOLLAR|דולר/;
+  const ilsRegex = /₪|ILS|NIS|שח|ש"ח/;
+
+  if (usdRegex.test(normalized)) {
     return 'USD';
-  } else if (ilsRegex.test(value)) {
-    return 'ILS';
-  } else {
+  }
+  if (ilsRegex.test(normalized)) {
     return 'ILS';
   }
+
+  return preferredLanguage === 'iw' ? 'ILS' : 'USD';
+}
+
+function detectLanguageFromText(text) {
+  if (!text) return null;
+  const francCode = franc(text, { whitelist: ['eng', 'heb'] });
+  if (francCode === 'heb') {
+    return 'iw';
+  }
+  if (francCode === 'eng') {
+    return 'en';
+  }
+  return null;
+}
+
+function detectDocumentLanguages(document, fallbackText = '') {
+  const languagesMap = new Map();
+
+  (document.pages || []).forEach((page) => {
+    (page.detectedLanguages || []).forEach((language) => {
+      if (!language.languageCode) {
+        return;
+      }
+      const accumulated = languagesMap.get(language.languageCode) || 0;
+      languagesMap.set(
+        language.languageCode,
+        Math.max(accumulated, language.confidence || 0)
+      );
+    });
+  });
+
+  let detectedLanguages = Array.from(languagesMap.entries()).map(
+    ([languageCode, confidence]) => ({
+      languageCode,
+      confidence,
+    })
+  );
+
+  detectedLanguages.sort(
+    (a, b) => (b.confidence || 0) - (a.confidence || 0)
+  );
+
+  if (detectedLanguages.length === 0 && fallbackText) {
+    const fallbackLanguage = detectLanguageFromText(fallbackText);
+    if (fallbackLanguage) {
+      detectedLanguages = [
+        { languageCode: fallbackLanguage, confidence: 1 },
+      ];
+    }
+  }
+
+  return detectedLanguages;
+}
+
+function getPrimaryLanguage(detectedLanguages) {
+  if (!detectedLanguages || detectedLanguages.length === 0) {
+    return 'en';
+  }
+
+  return detectedLanguages[0].languageCode || 'en';
+}
+
+function isRtlLanguage(languageCode) {
+  return ['iw', 'he', 'ar', 'fa'].includes(languageCode);
+}
+
+function formatDetectedLanguages(languages) {
+  if (!languages || languages.length === 0) {
+    return 'und';
+  }
+
+  return languages
+    .map((language) => {
+      const confidence = language.confidence || 0;
+      return `${language.languageCode}:${(confidence * 100).toFixed(1)}%`;
+    })
+    .join(', ');
+}
+
+function buildResultEmailHtml(excelUrl, zipUrl) {
+  return `<p>שלום,</p>
+  <p>הקבצים שעיבדנו זמינים להורדה בשעה הקרובה:</p>
+  <ul>
+    <li><a href="${excelUrl}">קובץ אקסל מסודר</a></li>
+    <li><a href="${zipUrl}">ארכיון ZIP עם כל המסמכים</a></li>
+  </ul>
+  <p>לשמירה על פרטיותך, הקישורים יפוגו בתוך שעה.</p>
+  <p>תודה,<br>Receipt Cloud</p>`;
+}
+
+async function getFileChecksum(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const stream = fs.createReadStream(filePath);
+    stream.on('data', (data) => hash.update(data));
+    stream.on('error', (error) => reject(error));
+    stream.on('end', () => resolve(hash.digest('hex')));
+  });
+}
+
+function rememberCacheEntry(key, value) {
+  if (!key || !value) {
+    return;
+  }
+  if (processedFileCache.has(key)) {
+    processedFileCache.delete(key);
+  }
+  processedFileCache.set(key, value);
+  if (processedFileCache.size > PROCESSED_FILE_CACHE_LIMIT) {
+    const oldestKey = processedFileCache.keys().next().value;
+    processedFileCache.delete(oldestKey);
+  }
+}
+
+async function getExpenseDataWithCache(filePath, serviceAccountAuth, idNumber) {
+  try {
+    const checksum = await getFileChecksum(filePath);
+    if (processedFileCache.has(checksum)) {
+      return processedFileCache.get(checksum);
+    }
+    const expenseData = await processFile(filePath, serviceAccountAuth, idNumber);
+    if (expenseData) {
+      rememberCacheEntry(checksum, expenseData);
+    }
+    return expenseData;
+  } catch (error) {
+    console.error('Failed to compute checksum for caching:', error.message);
+    return processFile(filePath, serviceAccountAuth, idNumber);
+  }
+}
+
+async function processFilesConcurrently(files, handler) {
+  if (!files || files.length === 0) {
+    return;
+  }
+
+  const concurrency = Math.min(MAX_CONCURRENT_FILE_PROCESSING, files.length);
+  let cursor = 0;
+
+  const workers = Array.from({ length: concurrency }, () =>
+    (async () => {
+      while (true) {
+        let currentIndex;
+        if (cursor >= files.length) {
+          break;
+        }
+        currentIndex = cursor;
+        cursor += 1;
+
+        try {
+          await handler(files[currentIndex], currentIndex);
+        } catch (error) {
+          console.error(
+            `Error while processing file ${files[currentIndex]}:`,
+            error.message
+          );
+        }
+      }
+    })()
+  );
+
+  await Promise.all(workers);
 }
 
 const exchangeRateCache = {};
@@ -458,6 +642,13 @@ async function parseReceiptWithDocumentAI(filePath, serviceAccountAuth) {
         content: encodedFile,
         mimeType: mimeType,
       },
+      processOptions: {
+        ocrConfig: {
+          languageHints: LANGUAGE_HINTS,
+          enableNativePdfParsing: true,
+          enableImagePreprocessing: true,
+        },
+      },
     };
 
     if (!serviceAccountAuth.credentials || !serviceAccountAuth.credentials.access_token) {
@@ -491,7 +682,17 @@ async function parseReceiptWithDocumentAI(filePath, serviceAccountAuth) {
       VAT: '',
       TotalPrice: '',
       Currency: '',
+      Language: '',
+      LanguageDirection: '',
+      DetectedLanguages: '',
     };
+
+    const documentText = document.text || '';
+    const detectedLanguages = detectDocumentLanguages(document, documentText);
+    const primaryLanguage = getPrimaryLanguage(detectedLanguages);
+    result.Language = primaryLanguage;
+    result.LanguageDirection = isRtlLanguage(primaryLanguage) ? 'rtl' : 'ltr';
+    result.DetectedLanguages = formatDetectedLanguages(detectedLanguages);
 
     let hasUSD = false;
     let originalUSD = 0;
@@ -507,7 +708,7 @@ async function parseReceiptWithDocumentAI(filePath, serviceAccountAuth) {
         currencyCode = entity.normalizedValue.moneyValue.currencyCode || '';
       } else {
         value = entity.mentionText || '';
-        currencyCode = detectCurrency(value);
+        currencyCode = detectCurrency(value, primaryLanguage);
       }
 
       if (currencyCode === 'USD') {
@@ -629,7 +830,8 @@ async function createExpenseExcel(expenses, folderPath, filePrefix, startDate, e
 
   let baseFileName = `${filePrefix}-${startDateFormatted}-to-${endDateFormatted}`;
   if (name && name.trim() !== '') {
-    baseFileName += `-${name.replace(/\s+/g, '_')}`;
+    const sanitizedName = sanitize(name).replace(/ /g, '_');
+    baseFileName += `-${sanitizedName}`;
   }
   let fileName = `${baseFileName}.xlsx`;
   let fullPath = path.join(folderPath, fileName);
@@ -643,10 +845,22 @@ async function createExpenseExcel(expenses, folderPath, filePrefix, startDate, e
 
   const workbook = new Excel.Workbook();
   const worksheet = workbook.addWorksheet('Expenses', {
-    views: [{ rightToLeft: true }]
+    views: [{ rightToLeft: true }],
   });
 
-  worksheet.columns = [    { header: 'שם הקובץ', key: 'FileName', width: 30 },    { header: 'שם העסק', key: 'BusinessName', width: 25 },    { header: 'מספר עסק', key: 'BusinessNumber', width: 20 },    { header: 'תאריך', key: 'Date', width: 15 },    { header: 'מספר חשבונית', key: 'InvoiceNumber', width: 20 },    { header: 'סכום ללא מע"מ', key: 'PriceWithoutVat', width: 20 },    { header: 'מע"מ', key: 'VAT', width: 15 },    { header: 'סכום כולל', key: 'TotalPrice', width: 20 },    { header: 'הומר מדולרים*', key: 'OriginalTotalUSD', width: 10 },  ];
+  worksheet.columns = [
+    { header: 'File Name', key: 'FileName', width: 30 },
+    { header: 'Business Name', key: 'BusinessName', width: 26 },
+    { header: 'Business Number', key: 'BusinessNumber', width: 20 },
+    { header: 'Invoice Date', key: 'Date', width: 16 },
+    { header: 'Invoice Number', key: 'InvoiceNumber', width: 20 },
+    { header: 'Amount (excl. VAT)', key: 'PriceWithoutVat', width: 20 },
+    { header: 'VAT Amount', key: 'VAT', width: 15 },
+    { header: 'Total Amount (ILS)', key: 'TotalPrice', width: 22 },
+    { header: 'Original Total (USD)', key: 'OriginalTotalUSD', width: 18 },
+    { header: 'Primary Language', key: 'Language', width: 18 },
+    { header: 'Detected Languages', key: 'DetectedLanguages', width: 28 },
+  ];
 
   worksheet.getRow(1).font = { bold: true, size: 12 };
   worksheet.getRow(1).alignment = { horizontal: 'center' };
@@ -683,6 +897,8 @@ async function createExpenseExcel(expenses, folderPath, filePrefix, startDate, e
       PriceWithoutVat: priceWithoutVatValue,
       VAT: vatValue,
       TotalPrice: totalPriceValue,
+      Language: expense['Language'] || '',
+      DetectedLanguages: expense['DetectedLanguages'] || '',
     });
   });
 
@@ -717,6 +933,7 @@ async function createExpenseExcel(expenses, folderPath, filePrefix, startDate, e
     throw new Error('Failed to save Excel file');
   }
 }
+
 
 async function createZipFile(files, outputFolder, zipFileName) {
   return new Promise((resolve, reject) => {
@@ -946,13 +1163,16 @@ app.get('/download/:filename', (req, res) => {
 
 app.get('/is-authenticated', (req, res) => {
   if (req.session.tokens) {
-    res.json({ authenticated: true });
+    res.json({
+      authenticated: true,
+      profile: req.session.gmailProfile || null,
+    });
   } else {
     res.json({ authenticated: false });
   }
 });
 
-function authenticateGmail(req, res, next) {
+async function authenticateGmail(req, res, next) {
   const oAuth2Client = new google.auth.OAuth2(
     process.env.GMAIL_CLIENT_ID,
     process.env.GMAIL_CLIENT_SECRET,
@@ -970,6 +1190,17 @@ function authenticateGmail(req, res, next) {
     });
 
     req.oAuth2Client = oAuth2Client;
+    try {
+      if (!req.session.gmailProfile) {
+        const profile = await fetchGmailProfile(oAuth2Client);
+        if (profile) {
+          req.session.gmailProfile = profile;
+        }
+      }
+      req.gmailProfile = req.session.gmailProfile;
+    } catch (profileError) {
+      console.error('Failed to load Gmail profile:', profileError.message);
+    }
     next();
   } else {
     res.redirect('/start-gmail-auth');
@@ -1008,6 +1239,14 @@ app.get('/oauth2callback', async (req, res) => {
     const { tokens } = await oAuth2Client.getToken(code);
     oAuth2Client.setCredentials(tokens);
     req.session.tokens = tokens;
+    try {
+      const profile = await fetchGmailProfile(oAuth2Client);
+      if (profile) {
+        req.session.gmailProfile = profile;
+      }
+    } catch (profileError) {
+      console.error('Unable to fetch Gmail profile after auth:', profileError.message);
+    }
     res.redirect('/gmail');
   } catch (error) {
     console.error('Error retrieving access token', error);
@@ -1033,6 +1272,8 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, (req, res) => {
   const additionalFiles = req.files ? req.files.map(file => file.path) : [];
   const progressEmitter = new EventEmitter();
   progressEmitters.set(sessionId, progressEmitter);
+  const gmailProfile = req.session.gmailProfile || null;
+  const connectedEmail = gmailProfile?.emailAddress || '';
 
   const task = {
     sessionId,
@@ -1040,7 +1281,8 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, (req, res) => {
     startDate: req.body.startDate,
     endDate: req.body.endDate,
     idNumber: req.body.idNumber || '',
-    email: req.body.email || '',
+    email: connectedEmail,
+    gmailProfile,
     progressEmitter,
     additionalFiles,
     req,
@@ -1050,8 +1292,15 @@ app.post('/process-gmail', authenticateGmail, additionalUpload, (req, res) => {
 
   if (isGmailProcessing) {
     const queuePosition = getQueuePosition(gmailTaskQueue, sessionId);
+    const queueStatus = connectedEmail
+      ? `סנכרון Gmail אל ${connectedEmail} ממתין במקום ${queuePosition}.`
+      : `סנכרון Gmail ממתין בתור במקום ${queuePosition}.`;
     progressEmitter.emit('progress', [
-      { status: `Your task is in a queue at position ${queuePosition}.`, progress: 0, queuePosition },
+      {
+        status: queueStatus,
+        progress: 0,
+        queuePosition,
+      },
     ]);
   } else {
     processNextGmailTask();
@@ -1108,6 +1357,7 @@ async function processNextGmailTask() {
     endDate,
     idNumber,
     email,
+    gmailProfile,
     progressEmitter,
     req,
     additionalFiles,
@@ -1115,13 +1365,16 @@ async function processNextGmailTask() {
 
   try {
     progressEmitter.emit('progress', [
-      { status: 'Processing started.', progress: 0 },
+      { status: 'העיבוד החל.', progress: 0 },
     ]);
 
     const auth = req.oAuth2Client;
-    const customPrefix = 'סיכום הוצאות';
+    const connectedAccountLabel = gmailProfile?.emailAddress
+      ? `Gmail - ${gmailProfile.emailAddress}`
+      : 'Gmail Inbox';
+    const customPrefix = connectedAccountLabel;
 
-    progressEmitter.emit('progress', [{ status: 'Downloading Gmail attachments...', progress: 10 }]);
+    progressEmitter.emit('progress', [{ status: 'מוריד קבצים מ-Gmail...', progress: 10 }]);
 
     await downloadGmailAttachments(auth, new Date(startDate), new Date(endDate), userFolder);
 
@@ -1133,7 +1386,7 @@ async function processNextGmailTask() {
     });
 
     if (files.length === 0) {
-      progressEmitter.emit('progress', [{ status: 'No files found to process.', progress: 100 }]);
+      progressEmitter.emit('progress', [{ status: 'לא נמצאו קבצים בטווח המבוקש.', progress: 100 }]);
       return;
     }
 
@@ -1143,33 +1396,43 @@ async function processNextGmailTask() {
       progress: 0,
     }));
 
+    const emitProgress = () => {
+      progressEmitter.emit('progress', progressData);
+    };
+
+    emitProgress();
+
     const expenses = [];
     const serviceAccountAuth = authenticateServiceAccount();
     await serviceAccountAuth.authorize();
 
-    for (let i = 0; i < files.length; i++) {
-      progressData[i].status = 'Processing';
-      progressData[i].progress = 25;
-      progressEmitter.emit('progress', progressData);
+    await processFilesConcurrently(files, async (filePath, index) => {
+      progressData[index].status = 'Processing';
+      progressData[index].progress = 25;
+      emitProgress();
 
-      const expenseData = await processFile(files[i], serviceAccountAuth, idNumber);
+      const expenseData = await getExpenseDataWithCache(
+        filePath,
+        serviceAccountAuth,
+        idNumber
+      );
 
       if (expenseData) {
         expenses.push(expenseData);
-        progressData[i].status = 'Completed';
-        progressData[i].progress = 100;
-        progressData[i].businessName = expenseData.BusinessName || 'N/A';
-        progressData[i].date = expenseData.Date || 'N/A';
-        progressData[i].totalPrice = expenseData.TotalPrice
+        progressData[index].status = 'Completed';
+        progressData[index].progress = 100;
+        progressData[index].businessName = expenseData.BusinessName || 'N/A';
+        progressData[index].date = expenseData.Date || 'N/A';
+        progressData[index].totalPrice = expenseData.TotalPrice
           ? parseFloat(expenseData.TotalPrice).toFixed(2)
           : 'N/A';
       } else {
-        progressData[i].status = 'Failed';
-        progressData[i].progress = 100;
+        progressData[index].status = 'Failed';
+        progressData[index].progress = 100;
       }
 
-      progressEmitter.emit('progress', progressData);
-    }
+      emitProgress();
+    });
 
     progressEmitter.emit('progress', [{ status: 'Creating Excel file...', progress: 80 }]);
 
@@ -1198,7 +1461,7 @@ async function processNextGmailTask() {
     progressEmitter.emit('progress', [
       ...progressData,
       {
-        status: 'Processing complete. Download the files below. Files will be available for 1 hour.',
+        status: 'העיבוד הושלם. ניתן להוריד את הקבצים בשעה הקרובה.',
         progress: 100,
         downloadLinks: [
           { label: 'הורד קובץ אקסל', url: excelUrl },
@@ -1212,12 +1475,7 @@ async function processNextGmailTask() {
         from: process.env.EMAIL_USER,
         to: email,
         subject: 'Your Processed Expense Files',
-        html: `<p>שלום,</p>
-        <p>קבציך עובדו בהצלחה. ניתן להוריד את הקבצים מהקישורים הבאים:</p>
-        <p><a href="${excelUrl}">הורדת אקסל</a></p>
-        <p><a href="${zipUrl}">הורדת קובצי ZIP</a></p>
-        <p>הקישורים יהיו זמינים למשך שעה.</p>
-        <p>תודה,<br>השירות שלך</p>`
+        html: buildResultEmailHtml(excelUrl, zipUrl),
       };
     
       transporter.sendMail(mailOptions, (error, info) => {
@@ -1261,6 +1519,13 @@ function isPdfFile(contentType, fileName) {
   } else {
     return false;
   }
+}
+
+
+async function fetchGmailProfile(oAuth2Client) {
+  const gmail = google.gmail({ version: 'v1', auth: oAuth2Client });
+  const profileResponse = await gmail.users.getProfile({ userId: 'me' });
+  return profileResponse.data;
 }
 
 async function downloadGmailAttachments(auth, startDate, endDate, folderPath) {
@@ -1504,3 +1769,5 @@ const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
+
+
