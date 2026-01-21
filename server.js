@@ -1266,10 +1266,10 @@ function isPdfFile(contentType, fileName) {
 async function downloadGmailAttachments(auth, startDate, endDate, folderPath) {
   const gmail = google.gmail({ version: 'v1', auth });
 
-  const positiveSubjectKeywords = [    'קבלה',    'חשבונית',    'חשבונית מס',    'הקבלה',    'החשבונית',    'החשבונית החודשית',    'אישור תשלום',    'receipt',    'invoice',    'חשבון חודשי',  ];
+  const positiveSubjectKeywords = [    'קבלה',    'חשבונית',    'חשבונית מס',    'הקבלה',   'החשבונית',   'קבלת',    'החשבונית החודשית',    'אישור תשלום',    'receipt',    'invoice',    'חשבון חודשי',  ];
 
   const excludedSenders = [    'חברת חשמל לישראל',    'עיריית תל אביב-יפו',    'ארנונה - עיריית תל-אביב-יפו',  ];
-  const senderExceptionKeywords = [    'קבלה',    'חשבונית',    'חשבונית מס',    'הקבלה',  ];
+  const senderExceptionKeywords = [    'קבלה',    'חשבונית',    'חשבונית מס',    'קבלת',    'הקבלה',  ];
 
   endDate.setHours(23, 59, 59, 999);
   const queryEndDate = new Date(endDate.getTime() + 24 * 60 * 60 * 1000);
